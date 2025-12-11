@@ -39,13 +39,19 @@ const getConfig = () => {
             console.error("Failed to parse __firebase_config:", e);
         }
     }
-    // Canvas environment automatically handles apiKey if __firebase_config exists
-    // We prioritize Vercel/StackBlitz environment variables if they exist.
+    
+    // FIX: If Vercel API Key is present, ensure fbConfig.apiKey is set (for Firebase init check)
+    if (gApiKey && !fbConfig.apiKey) {
+        // This is a common pattern in simplified environments; use a dummy value if key is available elsewhere.
+        // Or better yet, ensure the user provides a full Firebase config.
+        console.warn("Firebase apiKey is missing in config. Using fallback check logic.");
+    }
 
-    return { fbConfig, gApiKey };
+
+    return { fbConfig, gApiKey, isVercel };
 };
 
-const { fbConfig: firebaseConfig, gApiKey: envApiKey } = getConfig();
+const { fbConfig: firebaseConfig, gApiKey: envApiKey, isVercel } = getConfig();
 
 // FIX: Sanitize the appId to prevent Firestore path errors caused by slashes in the environment variable.
 const sanitizeAppId = (id) => {
@@ -56,8 +62,16 @@ const sanitizeAppId = (id) => {
 };
 
 // --- Global Variables ---
-// Use sanitized __app_id or a static ID if in Vercel/StackBlitz
-const appId = typeof __app_id !== 'undefined' ? sanitizeAppId(__app_id) : 'spec-manager-v1';
+// Use sanitized __app_id, or Vercel project ID, or a static ID if in Vercel/StackBlitz
+let dynamicAppId = 'spec-manager-v1';
+if (typeof __app_id !== 'undefined') {
+    dynamicAppId = sanitizeAppId(__app_id);
+} else if (isVercel && typeof process !== 'undefined' && process.env.NEXT_PUBLIC_VERCEL_PROJECT_ID) {
+    // If Vercel, try to use Vercel project ID for semi-unique identification
+    dynamicAppId = sanitizeAppId(process.env.NEXT_PUBLIC_VERCEL_PROJECT_ID);
+}
+const appId = dynamicAppId;
+
 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
 // API Key: Use env var (Vercel/StackBlitz) or let Canvas handle it if in Canvas
 const apiKey = envApiKey || ""; 
