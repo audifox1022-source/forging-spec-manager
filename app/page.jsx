@@ -142,34 +142,56 @@ const ForgingSpecManager = () => {
             return; 
         }
 
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        const handleAuthResult = (user) => {
             if (user) {
                 setUserId(user.uid);
-                // FIX: 유저가 확보되면 인증 완료 상태로 설정
-                setIsAuthReady(true); 
-            } else if (initialAuthToken) {
-                try {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } catch (e) {
-                    console.error("Custom token sign-in failed. Falling back to anonymous.", e);
-                    // 익명 로그인 시도
-                    await signInAnonymously(auth).catch(() => {
-                        setLoading(false);
-                        setError("익명 로그인 실패. Firebase Auth 설정을 확인하세요.");
-                    });
-                }
+                setIsAuthReady(true); // 유저 ID 확보 시 인증 완료 상태로 설정
             } else {
-                // 익명 로그인 시도
-                await signInAnonymously(auth).catch(() => {
-                    setLoading(false);
-                    setError("익명 로그인 실패. Firebase Auth 설정을 확인하세요.");
-                });
+                setUserId(null);
+                setIsAuthReady(false); // 유저 ID 미확보 시 미완료 상태로 설정
+                setError("인증 실패: Firebase Auth 설정을 확인하세요.");
             }
-            
-            // 모든 인증/로그인 시도가 끝나면 로딩 종료 (성공 여부와 관계없이)
-            setLoading(false); 
+            setLoading(false); // 모든 시도 후 로딩 종료
+        };
+
+        const trySignIn = async () => {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (e) {
+                console.error("Sign-in attempt failed:", e);
+                // 강제적인 에러 메시지 설정
+                setError("로그인 시도 실패: 익명 인증 또는 토큰 설정을 확인하세요.");
+                setLoading(false);
+            }
+        };
+
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            if (user) {
+                handleAuthResult(user);
+            } else {
+                // 최초 onAuthStateChanged가 user가 null로 반환될 경우 (아직 로그인 안됨)
+                // 익명 로그인을 시도합니다.
+                trySignIn();
+            }
         });
-        return () => unsubscribe();
+
+        // 3초 후에도 로딩이 풀리지 않으면 타임아웃 오류 메시지 설정
+        const timeoutId = setTimeout(() => {
+            if (loading && !isAuthReady) {
+                setLoading(false);
+                // 인증 실패 상태를 더 명확하게 설정
+                setError(prev => prev || "인증 타임아웃: 네트워크 상태, Firebase 도메인/인증 설정을 확인하세요.");
+            }
+        }, 5000); // 5초 타임아웃 설정
+
+        return () => {
+            clearTimeout(timeoutId);
+            unsubscribe();
+        };
     }, []);
 
     // 2. Firestore Real-time Data Fetching
@@ -824,7 +846,7 @@ const ForgingSpecManager = () => {
                 <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900">단조 시방서 통합 관리 시스템</h1>
                 <p className="text-lg text-gray-600 mt-1">AI 요약 및 키워드 검색 기반의 문서 접근성 향상</p>
                 {/* FIX: 인증 상태를 사용자에게 명확히 표시 */}
-                <div className={`mt-2 text-xs ${userId ? 'text-green-600' : 'text-gray-400'}`}>
+                <div className={`mt-2 text-xs ${userId ? 'text-green-600' : 'text-red-600'}`}>
                     사용자 ID: {userId ? userId : (loading ? '인증 및 로드 중...' : '인증 실패 또는 설정 오류')} (개인 데이터 저장 경로)
                 </div>
             </header>
