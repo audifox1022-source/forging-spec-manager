@@ -10,27 +10,38 @@ import { Search, FileText, Download, Upload, Trash2, Loader2, XCircle, Zap, File
 const getConfig = () => {
     let fbConfig = {};
     let gApiKey = "";
-    
-    try {
-        // 1. Canvas/Internal Environment Check
-        if (typeof __firebase_config !== 'undefined') {
-            fbConfig = JSON.parse(__firebase_config);
-        } 
-        // 2. Next.js / StackBlitz / Vercel Environment Check
-        else if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_FIREBASE_CONFIG) {
-            const envConfig = process.env.NEXT_PUBLIC_FIREBASE_CONFIG;
-            fbConfig = typeof envConfig === 'string' ? JSON.parse(envConfig) : envConfig;
-        }
+    let isVercel = false;
 
-        // API Key Check
-        if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+    // 1. Check Next.js / StackBlitz / Vercel Environment Variables
+    if (typeof process !== 'undefined') {
+        if (process.env.NEXT_PUBLIC_FIREBASE_CONFIG) {
+            isVercel = true;
+            try {
+                const envConfig = process.env.NEXT_PUBLIC_FIREBASE_CONFIG;
+                // Environment variables are often strings, so we parse it
+                fbConfig = typeof envConfig === 'string' ? JSON.parse(envConfig) : envConfig;
+            } catch (e) {
+                console.error("Failed to parse NEXT_PUBLIC_FIREBASE_CONFIG:", e);
+                // Return invalid config if parsing fails
+                fbConfig = {}; 
+            }
+        }
+        if (process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
             gApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-        } 
-        // Canvas runtime injects key automatically, but for external env we need variable
-    } catch (e) {
-        console.warn("Config loading error:", e);
+        }
     }
-    
+
+    // 2. Canvas/Internal Environment Check (Fallback/Primary in Canvas)
+    if (typeof __firebase_config !== 'undefined' && !isVercel) {
+        try {
+            fbConfig = JSON.parse(__firebase_config);
+        } catch (e) {
+            console.error("Failed to parse __firebase_config:", e);
+        }
+    }
+    // Canvas environment automatically handles apiKey if __firebase_config exists
+    // We prioritize Vercel/StackBlitz environment variables if they exist.
+
     return { fbConfig, gApiKey };
 };
 
@@ -39,17 +50,16 @@ const { fbConfig: firebaseConfig, gApiKey: envApiKey } = getConfig();
 // FIX: Sanitize the appId to prevent Firestore path errors caused by slashes in the environment variable.
 const sanitizeAppId = (id) => {
     if (typeof id === 'string') {
-        // Replace slashes (/) with hyphens (-) as slashes break Firestore paths.
-        // Also replace dots (.) with underscores (_) for general ID safety.
         return id.replace(/\//g, '-').replace(/\./g, '_');
     }
     return 'spec-manager-v1';
 };
 
 // --- Global Variables ---
-const appId = sanitizeAppId(typeof __app_id !== 'undefined' ? __app_id : null);
+// Use sanitized __app_id or a static ID if in Vercel/StackBlitz
+const appId = typeof __app_id !== 'undefined' ? sanitizeAppId(__app_id) : 'spec-manager-v1';
 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
-// API Key: Use env var if available, otherwise empty (Canvas injects it)
+// API Key: Use env var (Vercel/StackBlitz) or let Canvas handle it if in Canvas
 const apiKey = envApiKey || ""; 
 
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
@@ -83,8 +93,9 @@ try {
         db = getFirestore(app);
         auth = getAuth(app);
     } else {
-        // Warning: Local or StackBlitz environment might lack config
-        console.warn("Firebase configuration is missing or empty.");
+        // Collect error message if config is missing
+        initError = "Firebase Configuration (apiKey, projectId, etc.)이 누락되었습니다.";
+        console.warn(initError);
     }
 } catch (e) {
     console.error("Firebase initialization failed:", e);
@@ -161,7 +172,7 @@ const ForgingSpecManager = () => {
     // --- Gemini API Handler: Generate Summary & Keywords ---
     const generateSpecMetadata = useCallback(async (fileName, fileContent) => {
         // API Key Check for Manual Environments
-        if (!apiKey) {
+        if (!apiKey && !process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
             throw new Error("Gemini API Key가 설정되지 않았습니다. .env.local 파일을 확인해주세요.");
         }
 
@@ -283,25 +294,25 @@ const ForgingSpecManager = () => {
 
     // --- Configuration Guard UI ---
     // If Firebase didn't init properly (e.g. missing config env vars), show a friendly message instead of crashing.
-    if (!app || !db || !auth) {
+    if (!app || !db || !auth || !firebaseConfig.apiKey) { // Also check for missing apiKey in config
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center border border-red-100">
                     <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
                     <h2 className="text-2xl font-bold text-gray-800 mb-2">설정 오류 발생</h2>
                     <p className="text-gray-600 mb-6">
-                        앱을 실행하기 위한 Firebase 및 API 설정이 감지되지 않았습니다.<br/>
+                        앱을 실행하기 위한 Firebase 및 AI 설정이 감지되지 않았습니다.<br/>
                         <span className="text-sm text-gray-400 block mt-2">({initError || "Config Missing"})</span>
                     </p>
                     <div className="text-left bg-gray-100 p-4 rounded text-sm text-gray-700 overflow-x-auto">
-                        <p className="font-semibold mb-1">StackBlitz 해결 방법:</p>
+                        <p className="font-semibold mb-1">StackBlitz/Vercel 해결 방법:</p>
                         <ol className="list-decimal list-inside space-y-1">
-                            <li>왼쪽 파일 목록에서 <code>.env.local</code> 파일을 만드세요.</li>
-                            <li>아래 내용을 복사해서 넣으세요.</li>
+                            <li>Vercel의 **환경 변수**에 아래 두 항목을 **NEXT_PUBLIC_** 접두사와 함께 등록했는지 확인하세요.</li>
+                            <li>특히 <code>NEXT_PUBLIC_FIREBASE_CONFIG</code>는 **JSON 문자열 전체**로 입력해야 합니다.</li>
                         </ol>
                         <pre className="bg-gray-800 text-white p-2 rounded mt-2 text-xs overflow-x-auto">
                             NEXT_PUBLIC_GEMINI_API_KEY="AIza..."{'\n'}
-                            NEXT_PUBLIC_FIREBASE_CONFIG={JSON.stringify({ apiKey: "..." })}
+                            NEXT_PUBLIC_FIREBASE_CONFIG={JSON.stringify({ apiKey: "...", projectId: "...", appId: "..." })}
                         </pre>
                     </div>
                 </div>
