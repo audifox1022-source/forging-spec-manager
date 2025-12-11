@@ -123,18 +123,20 @@ try {
 // Data Structure: /artifacts/{appId}/users/{userId}/forging_specs/{docId}
 
 const ForgingSpecManager = () => {
-    const [isAuthReady, setIsAuthReady] = useState(false);
+    // isAuthReady: Firebase 인증 및 로그인 완료 여부 (데이터 로드 시작 조건)
+    const [isAuthReady, setIsAuthReady] = useState(false); 
     const [userId, setUserId] = useState(null);
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const [loading, setLoading] = useState(false); // Global loading for data fetching/saving
+    const [loading, setLoading] = useState(true); // FIX: 초기 로딩 상태를 true로 설정
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
 
     // 1. Firebase Authentication & Initialization
     useEffect(() => {
         if (!auth) {
-            return; // Initialization failed globally
+            setLoading(false); // 초기화 실패 시 로딩 종료
+            return; 
         }
 
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -150,13 +152,16 @@ const ForgingSpecManager = () => {
             } else {
                 await signInAnonymously(auth);
             }
+            // 인증이 완료되면 isAuthReady를 true로 설정
             setIsAuthReady(true);
+            setLoading(false); // 인증 완료 시 로딩 종료
         });
         return () => unsubscribe();
     }, []);
 
     // 2. Firestore Real-time Data Fetching
     useEffect(() => {
+        // userId가 확보되고 db 연결이 완료되었을 때만 데이터 로드를 시도합니다.
         if (!isAuthReady || !userId || !db) return;
         
         // Define collection path for private data
@@ -792,8 +797,9 @@ const ForgingSpecManager = () => {
             <header className="mb-8">
                 <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900">단조 시방서 통합 관리 시스템</h1>
                 <p className="text-lg text-gray-600 mt-1">AI 요약 및 키워드 검색 기반의 문서 접근성 향상</p>
-                <div className="mt-2 text-xs text-gray-400">
-                    사용자 ID: {userId || '인증 대기 중...'} (개인 데이터 저장 경로)
+                {/* FIX: 인증 상태를 사용자에게 명확히 표시 */}
+                <div className={`mt-2 text-xs ${userId ? 'text-green-600' : 'text-gray-400'}`}>
+                    사용자 ID: {userId ? userId : '인증 대기 중...'} (개인 데이터 저장 경로)
                 </div>
             </header>
 
@@ -814,7 +820,9 @@ const ForgingSpecManager = () => {
                         placeholder="문서 제목, 키워드, 내용으로 검색..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10 shadow-inner focus:border-indigo-500 focus:ring-indigo-500 transition"
+                        // FIX: 인증이 완료되었거나, 로딩 중일 때만 입력 가능하도록 조정
+                        disabled={!isAuthReady} 
+                        className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10 shadow-inner focus:border-indigo-500 focus:ring-indigo-500 transition disabled:bg-gray-200"
                     />
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
                 </div>
@@ -822,8 +830,8 @@ const ForgingSpecManager = () => {
                 {/* Upload Button */}
                 <button
                     onClick={() => setModal({ isOpen: true, type: 'upload', data: null })}
-                    // FIX: isAuthReady를 제거하여 인증이 완료되지 않았더라도 Firebase 초기화만 성공하면 버튼 활성화.
-                    disabled={!!globalInitError || loading} 
+                    // FIX: Global Init Error가 없고, 인증 준비가 완료되었을 때만 활성화.
+                    disabled={!!globalInitError || !isAuthReady || loading} 
                     className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition shadow-lg disabled:bg-gray-400"
                 >
                     <Upload size={20} className="mr-2" />
@@ -833,7 +841,16 @@ const ForgingSpecManager = () => {
             
             {/* Spec List */}
             <div className="space-y-4">
-                {isAuthReady && specs.length === 0 && !loading && (
+                {/* FIX: 로딩 인디케이터 표시 조건 강화 */}
+                {loading && (
+                    <div className="flex justify-center items-center py-10 text-indigo-600">
+                        <Loader2 size={32} className="animate-spin mr-3" />
+                        <p className="text-lg font-medium">인증 및 데이터를 로드하고 있습니다...</p>
+                    </div>
+                )}
+                
+                {/* FIX: 데이터 없음 메시지 표시 조건 강화 */}
+                {isAuthReady && !loading && specs.length === 0 && (
                     <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
                         <FileText size={48} className="mx-auto text-gray-300" />
                         <p className="mt-3 text-lg font-medium">등록된 시방서가 없습니다.</p>
@@ -841,18 +858,11 @@ const ForgingSpecManager = () => {
                     </div>
                 )}
                 
-                {loading && (
-                    <div className="flex justify-center items-center py-10 text-indigo-600">
-                        <Loader2 size={32} className="animate-spin mr-3" />
-                        <p className="text-lg font-medium">데이터를 로드하고 있습니다...</p>
-                    </div>
-                )}
-
-                {filteredSpecs.map(spec => (
+                {isAuthReady && specs.map(spec => (
                     <SpecCard key={spec.id} spec={spec} />
                 ))}
 
-                {searchTerm && filteredSpecs.length === 0 && (
+                {isAuthReady && searchTerm && filteredSpecs.length === 0 && (
                      <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
                         <p className="text-lg font-medium">'{searchTerm}'에 대한 검색 결과가 없습니다.</p>
                         <p className="text-sm">다른 키워드로 검색해보거나 문서를 등록해주세요.</p>
