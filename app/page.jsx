@@ -58,6 +58,9 @@ const getConfig = () => {
     return { fbConfig, gApiKey, isVercel };
 };
 
+// Helper function to truncate keys for safe display
+const truncateKey = (key) => (key && typeof key === 'string' && key.length > 10 ? key.substring(0, 6) + '...' + key.substring(key.length - 4) : key || 'N/A');
+
 const { fbConfig: firebaseConfig, gApiKey: envApiKey, isVercel } = getConfig();
 
 // FIX: Sanitize the appId to prevent Firestore path errors caused by slashes in the environment variable.
@@ -359,6 +362,12 @@ const ForgingSpecManager = () => {
     // --- Configuration Guard UI ---
     // Use the globalInitError check here.
     if (globalInitError || !auth) {
+        
+        // Truncate sensitive data for display purposes
+        const displayApiKey = truncateKey(firebaseConfig.apiKey);
+        const displayProjectId = firebaseConfig.projectId || 'N/A';
+        const displayAppId = firebaseConfig.appId || 'N/A';
+
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center border border-red-100">
@@ -368,15 +377,23 @@ const ForgingSpecManager = () => {
                         앱을 실행하기 위한 Firebase 및 AI 설정이 감지되지 않았습니다.<br/>
                         <span className="text-sm text-gray-400 block mt-2">({globalInitError || "Initialization Failed"})</span>
                     </p>
-                    <div className="text-left bg-gray-100 p-4 rounded text-sm text-gray-700 overflow-x-auto">
-                        <p className="font-semibold mb-1">StackBlitz/Vercel 해결 방법:</p>
+                    <div className="text-left bg-red-100 p-4 rounded text-sm text-red-700 overflow-x-auto mb-4">
+                        <p className="font-semibold mb-1">📢 **Firebase 설정 재점검 (필수)**</p>
                         <ol className="list-decimal list-inside space-y-1">
-                            <li>Vercel의 **환경 변수**에 아래 두 항목을 **NEXT_PUBLIC_** 접두사와 함께 등록했는지 확인하세요.</li>
-                            <li>특히 <code>NEXT_PUBLIC_FIREBASE_CONFIG</code>는 **JSON 문자열 전체**로 입력해야 합니다. (<code>projectId</code>, <code>apiKey</code> 등 필수)</li>
+                            <li>**인증 (Authentication):** "로그인 방법" 탭에서 **'익명(Anonymous)'** 항목이 **사용 설정** 되어 있는지 확인.</li>
+                            <li>**승인된 도메인:** "설정" 탭에서 현재 앱의 **도메인 주소(예: stackblitz.com)**가 등록되어 있는지 확인.</li>
+                            <li>**보안 규칙 (Rules):** Firestore 규칙이 `allow read, write: if request.auth != null;` 인지 확인.</li>
                         </ol>
+                    </div>
+                    <div className="text-left bg-gray-100 p-4 rounded text-sm text-gray-700 overflow-x-auto">
+                        <p className="font-semibold mb-1">앱이 사용 중인 설정값 (디버그):</p>
                         <pre className="bg-gray-800 text-white p-2 rounded mt-2 text-xs overflow-x-auto">
-                            NEXT_PUBLIC_GEMINI_API_KEY="AIza..."{'\n'}
-                            NEXT_PUBLIC_FIREBASE_CONFIG={JSON.stringify({ apiKey: "...", projectId: "...", appId: "..." })}
+                            {`{
+  "projectId": "${displayProjectId}",
+  "apiKey": "${displayApiKey}",
+  "appId": "${displayAppId}",
+  // ... (다른 값은 Console에서 비교하세요)
+}`}
                         </pre>
                     </div>
                 </div>
