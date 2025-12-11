@@ -1,23 +1,56 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+"use client"; // <-- 이 줄은 유지되어야 합니다.
+import { useState, useEffect, useCallback, useMemo } from 'react'; // FIX: React 제거
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, orderBy, serverTimestamp } from 'firebase/firestore';
 import { Search, FileText, Download, Upload, Trash2, Loader2, XCircle, Zap, File, ListChecks, AlertTriangle } from 'lucide-react';
 
-// --- Global Variables (Canvas Environment) ---
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+// --- Configuration Helper ---
+// 환경 변수나 전역 변수에서 안전하게 값을 가져오는 함수
+const getConfig = () => {
+    let fbConfig = {};
+    let gApiKey = "";
+    
+    try {
+        // 1. Canvas/Internal Environment Check
+        if (typeof __firebase_config !== 'undefined') {
+            fbConfig = JSON.parse(__firebase_config);
+        } 
+        // 2. Next.js / StackBlitz / Vercel Environment Check
+        else if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_FIREBASE_CONFIG) {
+            const envConfig = process.env.NEXT_PUBLIC_FIREBASE_CONFIG;
+            fbConfig = typeof envConfig === 'string' ? JSON.parse(envConfig) : envConfig;
+        }
 
-// Firebase Config Parsing with Safety Check
-let firebaseConfig = {};
-try {
-    firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-} catch (e) {
-    console.warn("Firebase Config Parsing Error:", e);
-}
+        // API Key Check
+        if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+            gApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+        } 
+        // Canvas runtime injects key automatically, but for external env we need variable
+    } catch (e) {
+        console.warn("Config loading error:", e);
+    }
+    
+    return { fbConfig, gApiKey };
+};
 
-// FIX: __initialAuthToken ReferenceError Fix (Use snake_case __initial_auth_token)
+const { fbConfig: firebaseConfig, gApiKey: envApiKey } = getConfig();
+
+// FIX: Sanitize the appId to prevent Firestore path errors caused by slashes in the environment variable.
+const sanitizeAppId = (id) => {
+    if (typeof id === 'string') {
+        // Replace slashes (/) with hyphens (-) as slashes break Firestore paths.
+        // Also replace dots (.) with underscores (_) for general ID safety.
+        return id.replace(/\//g, '-').replace(/\./g, '_');
+    }
+    return 'spec-manager-v1';
+};
+
+// --- Global Variables ---
+const appId = sanitizeAppId(typeof __app_id !== 'undefined' ? __app_id : null);
 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
-const apiKey = ""; // Gemini API Key is provided by Canvas runtime
+// API Key: Use env var if available, otherwise empty (Canvas injects it)
+const apiKey = envApiKey || ""; 
 
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
@@ -44,8 +77,8 @@ let app, db, auth;
 let initError = null;
 
 try {
-    // Only initialize if config looks valid to prevent immediate crash
-    if (firebaseConfig && Object.keys(firebaseConfig).length > 0) {
+    // Check if config is valid (has apiKey at minimum)
+    if (firebaseConfig && firebaseConfig.apiKey) {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
@@ -72,7 +105,6 @@ const ForgingSpecManager = () => {
     // 1. Firebase Authentication & Initialization
     useEffect(() => {
         if (!auth) {
-            // If auth isn't initialized, we can't proceed with login
             return;
         }
 
@@ -115,7 +147,6 @@ const ForgingSpecManager = () => {
                 if (error) setError(''); // Clear error if data is fetched successfully
             }, (e) => {
                 console.error("Firestore data fetch failed:", e);
-                // Don't show alert for permission errors immediately on load
                 if (e.code !== 'permission-denied') {
                     setError("데이터 로딩 중 오류가 발생했습니다. (연결 문제 등)");
                 }
@@ -129,6 +160,11 @@ const ForgingSpecManager = () => {
 
     // --- Gemini API Handler: Generate Summary & Keywords ---
     const generateSpecMetadata = useCallback(async (fileName, fileContent) => {
+        // API Key Check for Manual Environments
+        if (!apiKey) {
+            throw new Error("Gemini API Key가 설정되지 않았습니다. .env.local 파일을 확인해주세요.");
+        }
+
         const systemPrompt = `당신은 전문적인 '단조 시방서' 분석 전문가입니다. 사용자가 제공한 문서 내용을 바탕으로 핵심 요약(summary)과 주요 키워드(keywords)를 추출하여 JSON 형식으로 제공하십시오.
         핵심 요약은 50단어 이내로, 키워드는 5개 이내의 배열로 작성하십시오.`;
 
@@ -254,15 +290,19 @@ const ForgingSpecManager = () => {
                     <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
                     <h2 className="text-2xl font-bold text-gray-800 mb-2">설정 오류 발생</h2>
                     <p className="text-gray-600 mb-6">
-                        앱을 실행하기 위한 Firebase 설정이 감지되지 않았습니다.<br/>
+                        앱을 실행하기 위한 Firebase 및 API 설정이 감지되지 않았습니다.<br/>
                         <span className="text-sm text-gray-400 block mt-2">({initError || "Config Missing"})</span>
                     </p>
                     <div className="text-left bg-gray-100 p-4 rounded text-sm text-gray-700 overflow-x-auto">
-                        <p className="font-semibold mb-1">확인 사항:</p>
-                        <ul className="list-disc list-inside">
-                            <li>환경 변수(.env)가 올바른지 확인하세요.</li>
-                            <li>StackBlitz를 사용 중이라면 의존성을 설치했는지 확인하세요.</li>
-                        </ul>
+                        <p className="font-semibold mb-1">StackBlitz 해결 방법:</p>
+                        <ol className="list-decimal list-inside space-y-1">
+                            <li>왼쪽 파일 목록에서 <code>.env.local</code> 파일을 만드세요.</li>
+                            <li>아래 내용을 복사해서 넣으세요.</li>
+                        </ol>
+                        <pre className="bg-gray-800 text-white p-2 rounded mt-2 text-xs overflow-x-auto">
+                            NEXT_PUBLIC_GEMINI_API_KEY="AIza..."{'\n'}
+                            NEXT_PUBLIC_FIREBASE_CONFIG={JSON.stringify({ apiKey: "..." })}
+                        </pre>
                     </div>
                 </div>
             </div>
