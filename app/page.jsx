@@ -828,7 +828,7 @@ const ForgingSpecManager = () => {
                 {/* Upload Button */}
                 <button
                     onClick={() => setModal({ isOpen: true, type: 'upload', data: null })}
-                    disabled={!isAuthReady || loading}
+                    disabled={!auth || !isAuthReady || loading} // FIX: auth 객체도 확인하도록 추가
                     className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition shadow-lg disabled:bg-gray-400"
                 >
                     <Upload size={20} className="mr-2" />
