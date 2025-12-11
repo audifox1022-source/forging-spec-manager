@@ -40,11 +40,16 @@ const getConfig = () => {
         }
     }
     
-    // FIX: If apiKey is missing in the parsed Firebase config, use Gemini key if available
-    // This allows Firebase initialization to pass the minimum requirement in simplified environments.
+    // FIX 1: If apiKey is missing in the parsed Firebase config, use Gemini key if available
     if (!fbConfig.apiKey && gApiKey) {
         fbConfig.apiKey = gApiKey; 
         console.warn("Firebase apiKey was derived from Gemini API Key for initialization.");
+    }
+    
+    // FIX 2: If projectId is missing, use the default app ID for stability
+    if (!fbConfig.projectId) {
+        fbConfig.projectId = 'default-canvas-project';
+        console.warn("Firebase projectId was set to a default value.");
     }
 
 
