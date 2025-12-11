@@ -136,8 +136,9 @@ const ForgingSpecManager = () => {
 
     // 1. Firebase Authentication & Initialization
     useEffect(() => {
+        // FIX: auth 객체가 없으면 Firebase 초기화가 실패한 것이므로 바로 종료
         if (!auth) {
-            setLoading(false); // 초기화 실패 시 로딩 종료
+            setLoading(false); // 로딩 종료
             return; 
         }
 
@@ -149,10 +150,12 @@ const ForgingSpecManager = () => {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } catch (e) {
                     console.error("Custom token sign-in failed. Falling back to anonymous.", e);
-                    await signInAnonymously(auth);
+                    // 익명 로그인 시도 실패 시에도 로딩은 반드시 종료
+                    await signInAnonymously(auth).catch(() => setLoading(false));
                 }
             } else {
-                await signInAnonymously(auth);
+                // 익명 로그인 시도
+                await signInAnonymously(auth).catch(() => setLoading(false));
             }
             // 인증이 완료되면 isAuthReady를 true로 설정
             setIsAuthReady(true);
@@ -188,7 +191,8 @@ const ForgingSpecManager = () => {
                 if (e.code !== 'permission-denied') { 
                     setError("데이터 로딩 중 오류가 발생했습니다. (연결 문제 등)");
                 } else {
-                    setError("데이터베이스 권한 오류: Firestore 보안 규칙을 확인하세요.");
+                    // 이 오류가 발생하면 Firebase Rules을 점검해야 함을 사용자에게 안내
+                    setError("데이터베이스 권한 오류: Firestore 보안 규칙을 확인하세요. (익명 사용자 읽기/쓰기 허용)");
                 }
             });
         } catch (e) {
