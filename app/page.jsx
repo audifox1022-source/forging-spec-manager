@@ -145,21 +145,29 @@ const ForgingSpecManager = () => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
                 setUserId(user.uid);
+                // FIX: 유저가 확보되면 인증 완료 상태로 설정
+                setIsAuthReady(true); 
             } else if (initialAuthToken) {
                 try {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } catch (e) {
                     console.error("Custom token sign-in failed. Falling back to anonymous.", e);
-                    // 익명 로그인 시도 실패 시에도 로딩은 반드시 종료
-                    await signInAnonymously(auth).catch(() => setLoading(false));
+                    // 익명 로그인 시도
+                    await signInAnonymously(auth).catch(() => {
+                        setLoading(false);
+                        setError("익명 로그인 실패. Firebase Auth 설정을 확인하세요.");
+                    });
                 }
             } else {
                 // 익명 로그인 시도
-                await signInAnonymously(auth).catch(() => setLoading(false));
+                await signInAnonymously(auth).catch(() => {
+                    setLoading(false);
+                    setError("익명 로그인 실패. Firebase Auth 설정을 확인하세요.");
+                });
             }
-            // 인증이 완료되면 isAuthReady를 true로 설정
-            setIsAuthReady(true);
-            setLoading(false); // 인증 완료 시 로딩 종료
+            
+            // 모든 인증/로그인 시도가 끝나면 로딩 종료 (성공 여부와 관계없이)
+            setLoading(false); 
         });
         return () => unsubscribe();
     }, []);
@@ -817,7 +825,7 @@ const ForgingSpecManager = () => {
                 <p className="text-lg text-gray-600 mt-1">AI 요약 및 키워드 검색 기반의 문서 접근성 향상</p>
                 {/* FIX: 인증 상태를 사용자에게 명확히 표시 */}
                 <div className={`mt-2 text-xs ${userId ? 'text-green-600' : 'text-gray-400'}`}>
-                    사용자 ID: {userId ? userId : '인증 대기 중...'} (개인 데이터 저장 경로)
+                    사용자 ID: {userId ? userId : (loading ? '인증 및 로드 중...' : '인증 실패 또는 설정 오류')} (개인 데이터 저장 경로)
                 </div>
             </header>
 
