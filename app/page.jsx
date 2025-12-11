@@ -18,11 +18,9 @@ const getConfig = () => {
             isVercel = true;
             try {
                 const envConfig = process.env.NEXT_PUBLIC_FIREBASE_CONFIG;
-                // Environment variables are often strings, so we parse it
                 fbConfig = typeof envConfig === 'string' ? JSON.parse(envConfig) : envConfig;
             } catch (e) {
                 console.error("Failed to parse NEXT_PUBLIC_FIREBASE_CONFIG:", e);
-                // Return invalid config if parsing fails
                 fbConfig = {}; 
             }
         }
@@ -47,14 +45,12 @@ const getConfig = () => {
     }
     
     // FIX 2: If projectId is missing, use the default app ID for stability
-    // FIX 3: Also ensure storageBucket is present for full initialization robustness
     const fallbackProjectId = 'canvas-project-' + (Math.random().toString(36).substring(2, 8));
     if (!fbConfig.projectId) {
         fbConfig.projectId = fallbackProjectId;
         console.warn("Firebase projectId was set to a default value for initialization.");
     }
     if (!fbConfig.storageBucket) {
-        // Firebase Storage needs this, although not currently used, it helps prevent errors.
         fbConfig.storageBucket = `${fbConfig.projectId}.appspot.com`;
     }
 
@@ -73,18 +69,15 @@ const sanitizeAppId = (id) => {
 };
 
 // --- Global Variables ---
-// Use sanitized __app_id, or Vercel project ID, or a static ID if in Vercel/StackBlitz
 let dynamicAppId = 'spec-manager-v1';
 if (typeof __app_id !== 'undefined') {
     dynamicAppId = sanitizeAppId(__app_id);
 } else if (isVercel && typeof process !== 'undefined' && process.env.NEXT_PUBLIC_VERCEL_PROJECT_ID) {
-    // If Vercel, try to use Vercel project ID for semi-unique identification
     dynamicAppId = sanitizeAppId(process.env.NEXT_PUBLIC_VERCEL_PROJECT_ID);
 }
 const appId = dynamicAppId;
 
 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
-// API Key: Use env var (Vercel/StackBlitz) or let Canvas handle it if in Canvas
 const apiKey = envApiKey || ""; 
 
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
@@ -109,7 +102,7 @@ const fetchWithRetry = async (url, options, retries = 3) => {
 
 // --- Firebase Initialization and Auth Logic ---
 let app, db, auth;
-let initError = null;
+let globalInitError = null; // Renamed to clearly differentiate from local state
 
 try {
     // Check if config is valid (has apiKey at minimum)
@@ -119,12 +112,12 @@ try {
         auth = getAuth(app);
     } else {
         // Collect error message if config is missing
-        initError = "Firebase Configuration (apiKey, projectId, etc.)이 누락되었습니다.";
-        console.warn(initError);
+        globalInitError = "Firebase Configuration (apiKey, projectId, etc.)이 누락되었습니다.";
+        console.warn(globalInitError);
     }
 } catch (e) {
     console.error("Firebase initialization failed:", e);
-    initError = e.message;
+    globalInitError = e.message;
 }
 
 // Data Structure: /artifacts/{appId}/users/{userId}/forging_specs/{docId}
@@ -141,7 +134,7 @@ const ForgingSpecManager = () => {
     // 1. Firebase Authentication & Initialization
     useEffect(() => {
         if (!auth) {
-            return;
+            return; // Initialization failed globally
         }
 
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -318,8 +311,8 @@ const ForgingSpecManager = () => {
     }, [specs, searchTerm]);
 
     // --- Configuration Guard UI ---
-    // If Firebase didn't init properly (e.g. missing config env vars), show a friendly message instead of crashing.
-    if (!app || !db || !auth || !firebaseConfig.apiKey) { // Also check for missing apiKey in config
+    // Use the globalInitError check here.
+    if (globalInitError || !auth) {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center border border-red-100">
@@ -327,13 +320,13 @@ const ForgingSpecManager = () => {
                     <h2 className="text-2xl font-bold text-gray-800 mb-2">설정 오류 발생</h2>
                     <p className="text-gray-600 mb-6">
                         앱을 실행하기 위한 Firebase 및 AI 설정이 감지되지 않았습니다.<br/>
-                        <span className="text-sm text-gray-400 block mt-2">({initError || "Config Missing"})</span>
+                        <span className="text-sm text-gray-400 block mt-2">({globalInitError || "Initialization Failed"})</span>
                     </p>
                     <div className="text-left bg-gray-100 p-4 rounded text-sm text-gray-700 overflow-x-auto">
                         <p className="font-semibold mb-1">StackBlitz/Vercel 해결 방법:</p>
                         <ol className="list-decimal list-inside space-y-1">
                             <li>Vercel의 **환경 변수**에 아래 두 항목을 **NEXT_PUBLIC_** 접두사와 함께 등록했는지 확인하세요.</li>
-                            <li>특히 <code>NEXT_PUBLIC_FIREBASE_CONFIG</code>는 **JSON 문자열 전체**로 입력해야 합니다.</li>
+                            <li>특히 <code>NEXT_PUBLIC_FIREBASE_CONFIG</code>는 **JSON 문자열 전체**로 입력해야 합니다. (<code>projectId</code>, <code>apiKey</code> 등 필수)</li>
                         </ol>
                         <pre className="bg-gray-800 text-white p-2 rounded mt-2 text-xs overflow-x-auto">
                             NEXT_PUBLIC_GEMINI_API_KEY="AIza..."{'\n'}
@@ -805,10 +798,11 @@ const ForgingSpecManager = () => {
             </header>
 
             {/* Error Message */}
-            {error && (
+            {/* Display error if there is a global init error OR a local runtime error */}
+            {(globalInitError || error) && (
                 <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-6 whitespace-pre-wrap" role="alert">
                     <strong className="font-bold">오류 발생!</strong>
-                    <span className="block sm:inline ml-2">{error}</span>
+                    <span className="block sm:inline ml-2">{globalInitError || error}</span>
                 </div>
             )}
             
@@ -828,7 +822,8 @@ const ForgingSpecManager = () => {
                 {/* Upload Button */}
                 <button
                     onClick={() => setModal({ isOpen: true, type: 'upload', data: null })}
-                    disabled={!auth || !isAuthReady || loading} // FIX: auth 객체도 확인하도록 추가
+                    // FIX: Global initialization error 시 버튼 비활성화
+                    disabled={!!globalInitError || !isAuthReady || loading} 
                     className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition shadow-lg disabled:bg-gray-400"
                 >
                     <Upload size={20} className="mr-2" />
