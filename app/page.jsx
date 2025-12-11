@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'; // FIX: React 제거
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, orderBy, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, orderBy, serverTimestamp, setLogLevel } from 'firebase/firestore'; // setLogLevel 추가
 import { Search, FileText, Download, Upload, Trash2, Loader2, XCircle, Zap, File, ListChecks, AlertTriangle } from 'lucide-react';
 
 // --- Configuration Helper ---
@@ -110,6 +110,8 @@ try {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
+        // FIX: Firebase SDK 디버그 로깅 추가
+        setLogLevel('debug');
     } else {
         // Collect error message if config is missing
         globalInitError = "Firebase Configuration (apiKey, projectId, etc.)이 누락되었습니다.";
@@ -181,8 +183,12 @@ const ForgingSpecManager = () => {
                 if (error) setError(''); // Clear error if data is fetched successfully
             }, (e) => {
                 console.error("Firestore data fetch failed:", e);
-                if (e.code !== 'permission-denied') {
+                // Security Rule Violation (permission-denied)을 catch하지 못하도록 수정.
+                // Firebase Rules 설정이 중요함을 강조.
+                if (e.code !== 'permission-denied') { 
                     setError("데이터 로딩 중 오류가 발생했습니다. (연결 문제 등)");
+                } else {
+                    setError("데이터베이스 권한 오류: Firestore 보안 규칙을 확인하세요.");
                 }
             });
         } catch (e) {
