@@ -47,9 +47,15 @@ const getConfig = () => {
     }
     
     // FIX 2: If projectId is missing, use the default app ID for stability
+    // FIX 3: Also ensure storageBucket is present for full initialization robustness
+    const fallbackProjectId = 'canvas-project-' + (Math.random().toString(36).substring(2, 8));
     if (!fbConfig.projectId) {
-        fbConfig.projectId = 'default-canvas-project';
-        console.warn("Firebase projectId was set to a default value.");
+        fbConfig.projectId = fallbackProjectId;
+        console.warn("Firebase projectId was set to a default value for initialization.");
+    }
+    if (!fbConfig.storageBucket) {
+        // Firebase Storage needs this, although not currently used, it helps prevent errors.
+        fbConfig.storageBucket = `${fbConfig.projectId}.appspot.com`;
     }
 
 
@@ -661,7 +667,7 @@ const ForgingSpecManager = () => {
             }
             
             await handleSaveAnalyzedSpecs(specsToSave);
-            // Closing modal is handled inside handleSaveAnalyzedSpecs on success/completion
+            // Closing modal is handled inside handleSaveAnalyyzedSpecs on success/completion
         };
 
         return (
