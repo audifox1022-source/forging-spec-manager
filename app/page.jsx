@@ -249,8 +249,9 @@ const ForgingSpecManager = () => {
 
     // Spec Registration (Handles saving of PRE-ANALYZED specs)
     const handleSaveAnalyzedSpecs = async (specsToSave) => {
+        // FIX: 저장 시점에도 userId 및 db 유효성을 재확인
         if (!userId || !db) {
-            setError("인증 또는 데이터베이스 연결이 준비되지 않았습니다.");
+            setError("인증 또는 데이터베이스 연결이 준비되지 않았습니다. 잠시 후 재시도하세요.");
             return;
         }
 
@@ -465,7 +466,7 @@ const ForgingSpecManager = () => {
                 <p className="text-lg font-semibold text-gray-800 break-words">{spec.fileName}</p>
                 <div className="text-sm text-gray-500 mt-1 flex items-center flex-wrap">
                     <span className="font-medium mr-2 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600">{spec.fileType}</span>
-                    <span className='mr-2'>|</span>
+                    <span class='mr-2'>|</span>
                     {spec.keywords && spec.keywords.map((k, i) => (
                         <span key={i} className="text-xs mr-1 bg-gray-100 text-gray-600 rounded-md px-1.5 py-0.5 mt-1 sm:mt-0">{k}</span>
                     ))}
@@ -664,6 +665,13 @@ const ForgingSpecManager = () => {
                 return;
             }
             
+            // FIX: 저장 시점에도 userId 및 db 유효성을 재확인
+            if (!userId || !db) {
+                setError("오류 발생! 인증 또는 데이터베이스 연결이 준비되지 않았습니다. 잠시 후 재시도하세요.");
+                setModal({ isOpen: false, type: '', data: null }); // 모달 닫기
+                return;
+            }
+            
             await handleSaveAnalyzedSpecs(specsToSave);
             // Closing modal is handled inside handleSaveAnalyyzedSpecs on success/completion
         };
@@ -737,7 +745,7 @@ const ForgingSpecManager = () => {
                 <form onSubmit={handleSave} className="space-y-4">
                     {uploadQueue.length === 0 ? (
                         <div className="text-center py-8 text-gray-500 border border-dashed border-gray-300 rounded-lg">
-                            <p className="font-medium">👆 상단 버튼을 눌러 시방서 파일 또는 폴더를 선택해주세요.</p>
+                            <p className="font-medium">👆 상단 버튼을 눌러 시방서 파일 또는 폴더를 선택해주세요。</p>
                         </div>
                     ) : (
                         uploadQueue.map((item, index) => (
@@ -854,7 +862,7 @@ const ForgingSpecManager = () => {
                     <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
                         <FileText size={48} className="mx-auto text-gray-300" />
                         <p className="mt-3 text-lg font-medium">등록된 시방서가 없습니다.</p>
-                        <p className="text-sm">상단의 '시방서 등록' 버튼으로 새로운 문서를 추가해보세요.</p>
+                        <p className="text-sm">상단의 '시방서 등록' 버튼으로 새로운 문서를 추가해보세요。</p>
                     </div>
                 )}
                 
@@ -865,7 +873,7 @@ const ForgingSpecManager = () => {
                 {isAuthReady && searchTerm && filteredSpecs.length === 0 && (
                      <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
                         <p className="text-lg font-medium">'{searchTerm}'에 대한 검색 결과가 없습니다.</p>
-                        <p className="text-sm">다른 키워드로 검색해보거나 문서를 등록해주세요.</p>
+                        <p className="text-sm">다른 키워드로 검색해보거나 문서를 등록해주세요。</p>
                     </div>
                 )}
             </div>
