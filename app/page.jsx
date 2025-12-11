@@ -822,8 +822,8 @@ const ForgingSpecManager = () => {
                 {/* Upload Button */}
                 <button
                     onClick={() => setModal({ isOpen: true, type: 'upload', data: null })}
-                    // FIX: Global initialization error 시 버튼 비활성화
-                    disabled={!!globalInitError || !isAuthReady || loading} 
+                    // FIX: isAuthReady를 제거하여 인증이 완료되지 않았더라도 Firebase 초기화만 성공하면 버튼 활성화.
+                    disabled={!!globalInitError || loading} 
                     className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition shadow-lg disabled:bg-gray-400"
                 >
                     <Upload size={20} className="mr-2" />
