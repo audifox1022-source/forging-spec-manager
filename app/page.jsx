@@ -158,6 +158,9 @@ const ForgingSpecManager = () => {
         };
 
         const trySignIn = async () => {
+            // FIX: 300ms 지연 추가로 네트워크 안정성 확보
+            await new Promise(resolve => setTimeout(resolve, 300)); 
+            
             try {
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
@@ -182,7 +185,7 @@ const ForgingSpecManager = () => {
             }
         });
 
-        // 3초 후에도 로딩이 풀리지 않으면 타임아웃 오류 메시지 설정
+        // 5초 후에도 로딩이 풀리지 않으면 타임아웃 오류 메시지 설정
         const timeoutId = setTimeout(() => {
             if (loading && !isAuthReady) {
                 setLoading(false);
