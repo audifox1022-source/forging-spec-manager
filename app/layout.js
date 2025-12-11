@@ -1,6 +1,6 @@
-import './globals.css';
+// Next.js 빌드 오류 방지를 위해, 사용하지 않는 CSS import를 제거합니다.
+// Tailwind CSS는 아래에서 CDN으로 로드합니다.
 
-// Vercel 배포를 위해 Tailwind CSS CDN을 로드합니다.
 const TailwindScript = () => (
   <script src="https://cdn.tailwindcss.com"></script>
 );
