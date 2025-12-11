@@ -40,11 +40,11 @@ const getConfig = () => {
         }
     }
     
-    // FIX: If Vercel API Key is present, ensure fbConfig.apiKey is set (for Firebase init check)
-    if (gApiKey && !fbConfig.apiKey) {
-        // This is a common pattern in simplified environments; use a dummy value if key is available elsewhere.
-        // Or better yet, ensure the user provides a full Firebase config.
-        console.warn("Firebase apiKey is missing in config. Using fallback check logic.");
+    // FIX: If apiKey is missing in the parsed Firebase config, use Gemini key if available
+    // This allows Firebase initialization to pass the minimum requirement in simplified environments.
+    if (!fbConfig.apiKey && gApiKey) {
+        fbConfig.apiKey = gApiKey; 
+        console.warn("Firebase apiKey was derived from Gemini API Key for initialization.");
     }
 
 
