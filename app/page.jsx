@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, FileJson, CheckSquare, Square } from 'lucide-react';
+import { Search, FileText, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square } from 'lucide-react';
 
 // --- Global Constants ---
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
@@ -95,27 +95,15 @@ const SpecCard = React.memo(({ spec, onDelete, onView, isSelected, onToggleSelec
                 className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
                 title="상세보기"
             >
-                <FileText size={18} />
+                <FileText size={18} /> <span className="ml-1 text-sm sm:hidden">상세보기</span>
             </button>
-            <a
-                href={spec.downloadLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => {
-                    e.preventDefault();
-                    alert("다운로드 기능: 실제 파일 경로가 있다면 다운로드가 시작됩니다.");
-                }}
-                className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md"
-                title="파일 다운로드"
-            >
-                <Download size={18} />
-            </a>
+            {/* 다운로드 버튼 제거됨: 로컬 저장소 모드에서는 파일 자체를 저장하지 않음 */}
             <button
                 onClick={() => onDelete(spec.id)}
                 className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
                 title="삭제"
             >
-                <Trash2 size={18} />
+                <Trash2 size={18} /> <span className="ml-1 text-sm sm:hidden">삭제</span>
             </button>
         </div>
     </div>
@@ -357,7 +345,10 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
     return (
         <div className="p-6 max-h-[80vh] overflow-y-auto">
             <h3 className="text-2xl font-bold text-gray-800 mb-4">시방서 등록 및 AI 분석</h3>
-            <p className="text-sm text-gray-500 mb-4">PDF, Excel 파일만 지원합니다.</p>
+            <p className="text-sm text-gray-500 mb-4">
+                PDF, Excel 파일을 선택하여 분석합니다.<br/>
+                <span className="text-xs text-orange-500">* 주의: 파일 자체는 저장되지 않으며, AI가 분석한 메타데이터(요약, 키워드)만 저장됩니다.</span>
+            </p>
             
             <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" accept=".pdf, .xlsx, .xls" />
             <input ref={folderInputRef} type="file" {...{ webkitdirectory: "" }} onChange={handleFileSelect} className="hidden" />
@@ -396,7 +387,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
                 disabled={analyzedCount === 0 || isAnalyzing}
                 className="mt-6 w-full py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400 flex justify-center items-center"
             >
-                <Download size={20} className="mr-2" />
+                <Save size={20} className="mr-2" />
                 분석 완료 항목 저장 ({analyzedCount}개)
             </button>
             
@@ -497,16 +488,6 @@ const ForgingSpecManager = () => {
 
     // 전체 선택/해제 핸들러
     const handleSelectAll = useCallback(() => {
-        // 현재 필터링된 목록을 기준으로 전체 선택/해제
-        // (필터링된 것만 선택하는 것이 UX 상 자연스러움)
-        // filteredAndSortedSpecs를 직접 참조할 수 없으므로(렌더링 중에만 계산됨),
-        // 여기서는 전체 specs 기준으로 하거나, 렌더링 결과에서 계산된 값을 받아야 함.
-        // 하지만 간단하게 구현하기 위해 전체 specs 기준으로 동작하거나,
-        // useMemo로 계산된 filteredSpecs를 dependency로 받아야 함.
-        // 여기서는 useMemo 아래에 정의하거나, specs 전체를 대상으로 함.
-        
-        // specs 기준으로 전체 선택 동작 (필터와 무관하게 전체 선택)
-        // 만약 현재 선택된 개수가 전체 개수와 같으면 모두 해제, 아니면 모두 선택
         if (selectedIds.size === specs.length && specs.length > 0) {
             setSelectedIds(new Set());
         } else {
@@ -623,7 +604,7 @@ const ForgingSpecManager = () => {
             {/* 컨트롤 바: 검색, 정렬, 등록, 다중삭제 */}
             <div className="flex flex-col xl:flex-row space-y-4 xl:space-y-0 xl:space-x-4 mb-8">
                 <div className="relative flex-grow flex gap-2">
-                    {/* 전체 선택 체크박스 (간단 버전) */}
+                    {/* 전체 선택 체크박스 */}
                     <button 
                         onClick={handleSelectAll}
                         className={`flex items-center justify-center w-12 rounded-lg border-2 ${specs.length > 0 && selectedIds.size === specs.length ? 'border-indigo-500 bg-indigo-50 text-indigo-600' : 'border-gray-300 bg-white text-gray-400'}`}
