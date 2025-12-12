@@ -182,7 +182,7 @@ const SearchBar = React.memo(({ onSearchChange, sortOption, onSortChange }) => {
                     onChange={handleChange} 
                     className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10 focus:outline-none focus:border-indigo-500 transition-colors" 
                 />
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={20} />
              </div>
              <select 
                 value={sortOption} 
@@ -218,7 +218,8 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, o
                 className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1"
                 aria-label={isSelected ? "선택 해제" : "선택"}
             >
-                {isSelected ? <CheckSquare className="text-indigo-600" size={24} /> : <Square size={24} />}
+                {/* FIX: 아이콘에 pointer-events-none 추가하여 INP 개선 */}
+                {isSelected ? <CheckSquare className="text-indigo-600 pointer-events-none" size={24} /> : <Square size={24} className="pointer-events-none" />}
             </button>
 
             <div className="flex-grow min-w-0">
@@ -246,7 +247,7 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, o
                     className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
                     title="상세보기"
                 >
-                    <FileText size={18} />
+                    <FileText size={18} className="pointer-events-none" />
                 </button>
                 <button
                     onClick={handleDownloadClick}
@@ -254,14 +255,14 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, o
                     className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md disabled:bg-green-300"
                     title="원본 파일 다운로드"
                 >
-                    {isDownloading ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                    {isDownloading ? <Loader2 size={18} className="animate-spin pointer-events-none" /> : <Download size={18} className="pointer-events-none" />}
                 </button>
                 <button
                     onClick={() => onDelete(spec.id)}
                     className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
                     title="삭제"
                 >
-                    <Trash2 size={18} />
+                    <Trash2 size={18} className="pointer-events-none" />
                 </button>
             </div>
         </div>
@@ -273,7 +274,7 @@ const SpecList = React.memo(({ specs, selectedIds, onToggleSelect, onDelete, onD
     if (specs.length === 0) {
         return (
             <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
-                <FileText size={48} className="mx-auto text-gray-300" />
+                <FileText size={48} className="mx-auto text-gray-300 pointer-events-none" />
                 <p>데이터가 없습니다.</p>
             </div>
         );
@@ -324,14 +325,14 @@ const UploadItem = React.memo(({ item, onChange, onDelete, onAnalyze, isAnalyzin
                     className="text-red-500 hover:text-red-700 transition"
                     title="항목 제거"
                 >
-                    <Trash2 size={16} />
+                    <Trash2 size={16} className="pointer-events-none" />
                 </button>
             </div>
             <div className="space-y-3">
                 <div>
                     <label className="block text-sm font-medium text-gray-700">선택된 파일</label>
                     <div className="mt-1 flex items-center bg-white p-2 rounded-lg border border-gray-300 shadow-sm text-gray-800">
-                        <File size={16} className="mr-2 text-indigo-500" />
+                        <File size={16} className="mr-2 text-indigo-500 pointer-events-none" />
                         <span className='truncate'>{displayFileName || "파일을 선택해주세요."}</span>
                         <span className="ml-auto font-medium px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600 text-xs">
                             {item.fileName ? getFileTypeFromExtension(item.fileName) : 'N/A'}
@@ -376,17 +377,17 @@ const UploadItem = React.memo(({ item, onChange, onDelete, onAnalyze, isAnalyzin
                 >
                     {isCurrentAnalyzing ? (
                         <>
-                            <Loader2 size={16} className="animate-spin mr-2" />
+                            <Loader2 size={16} className="animate-spin mr-2 pointer-events-none" />
                             AI 분석 중...
                         </>
                     ) : isAnalyzed ? (
                         <>
-                            <Zap size={16} className="mr-2" />
+                            <Zap size={16} className="mr-2 pointer-events-none" />
                             재분석
                         </>
                     ) : (
                         <>
-                            <Zap size={16} className="mr-2" />
+                            <Zap size={16} className="mr-2 pointer-events-none" />
                             분석하기
                         </>
                     )}
@@ -408,60 +409,54 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
     const analyzedCount = uploadQueue.filter(item => item.fileName && item.status === 'analyzed').length;
 
     const handleFileSelect = useCallback((event) => {
-        // FIX: 이벤트 처리를 비동기로 미뤄 INP 개선
-        const files = event.target.files; // FileList 참조
-        if (!files || files.length === 0) return;
+        const files = Array.from(event.target.files);
+        if (files.length === 0) return;
 
-        // 즉시 입력값 초기화하여 브라우저 응답성 확보
-        event.target.value = '';
+        const allowedExtensions = ['pdf', 'xlsx', 'xls'];
+        const validFiles = files.filter(file => {
+            const ext = file.name.split('.').pop().toLowerCase();
+            return allowedExtensions.includes(ext);
+        });
 
-        // 무거운 처리를 지연 실행
-        setTimeout(() => {
-            const allowedExtensions = ['pdf', 'xlsx', 'xls'];
-            const fileArray = Array.from(files);
-            
-            const validFiles = fileArray.filter(file => {
-                const ext = file.name.split('.').pop().toLowerCase();
-                return allowedExtensions.includes(ext);
-            });
+        if (validFiles.length === 0) {
+            alert("PDF 또는 엑셀 파일(.pdf, .xlsx, .xls)만 업로드할 수 있습니다.");
+            event.target.value = '';
+            return;
+        }
 
-            if (validFiles.length === 0) {
-                alert("PDF 또는 엑셀 파일(.pdf, .xlsx, .xls)만 업로드할 수 있습니다.");
-                return;
+        const newSpecs = validFiles.map(file => {
+            const parts = file.name.split('.');
+            const ext = parts.pop().toLowerCase();
+            let fileType = 'ETC';
+            if(ext === 'pdf') fileType = 'PDF';
+            else if(ext === 'xlsx' || ext === 'xls') fileType = 'XLSX';
+
+            let filePath = '';
+            if (file.webkitRelativePath) {
+                const pathParts = file.webkitRelativePath.split('/');
+                filePath = pathParts.slice(0, -1).join('/'); 
             }
-
-            const newSpecs = validFiles.map(file => {
-                const parts = file.name.split('.');
-                const ext = parts.pop().toLowerCase();
-                let fileType = 'ETC';
-                if(ext === 'pdf') fileType = 'PDF';
-                else if(ext === 'xlsx' || ext === 'xls') fileType = 'XLSX';
-
-                let filePath = '';
-                if (file.webkitRelativePath) {
-                    const pathParts = file.webkitRelativePath.split('/');
-                    filePath = pathParts.slice(0, -1).join('/'); 
-                }
-                
-                return {
-                    id: safeCreateId(),
-                    file: file, 
-                    fileName: file.name,
-                    filePath: filePath, 
-                    fileType: fileType, 
-                    mockContent: '', 
-                    status: 'pending', 
-                    summary: '', 
-                    keywords: [], 
-                    error: ''
-                };
-            });
             
-            setUploadQueue(prev => {
-                const existingFiles = prev.filter(item => item.fileName);
-                return [...existingFiles, ...newSpecs, createInitialItem()];
-            });
-        }, 0);
+            return {
+                id: safeCreateId(),
+                file: file, 
+                fileName: file.name,
+                filePath: filePath, 
+                fileType: fileType, 
+                mockContent: '', 
+                status: 'pending', 
+                summary: '', 
+                keywords: [], 
+                error: ''
+            };
+        });
+        
+        setUploadQueue(prev => {
+            const existingFiles = prev.filter(item => item.fileName);
+            return [...existingFiles, ...newSpecs, createInitialItem()];
+        });
+
+        event.target.value = ''; 
     }, []);
 
     const handleRemoveItem = useCallback((id) => {
@@ -540,15 +535,15 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
 
             <div className="mb-6 space-y-2 border-b pb-4">
                 <button type="button" onClick={() => triggerFileInput(false)} className="w-full py-3 border-2 border-dashed border-indigo-300 rounded-lg text-indigo-700 flex justify-center items-center hover:bg-indigo-50">
-                    <Upload size={20} className="mr-2" /> 개별 파일 선택
+                    <Upload size={20} className="mr-2 pointer-events-none" /> 개별 파일 선택
                 </button>
                 <button type="button" onClick={() => triggerFileInput(true)} className="w-full py-3 border-2 border-dashed border-indigo-300 rounded-lg text-indigo-700 flex justify-center items-center hover:bg-indigo-50">
-                    <File size={20} className="mr-2" /> 폴더 선택 (PDF/Excel만 자동 선택)
+                    <File size={20} className="mr-2 pointer-events-none" /> 폴더 선택 (PDF/Excel만 자동 선택)
                 </button>
                 
                  {uploadQueue.filter(item => item.fileName).length > 0 && (
                     <button type="button" onClick={handleAnalyzeAll} disabled={isAnalyzing || isSaving} className="w-full py-3 bg-purple-600 text-white rounded-lg flex justify-center items-center mt-2 hover:bg-purple-700 disabled:bg-gray-400">
-                        <Zap size={18} className="mr-2" /> 일괄 분석하기
+                        <Zap size={18} className="mr-2 pointer-events-none" /> 일괄 분석하기
                     </button>
                  )}
             </div>
@@ -572,12 +567,12 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
                 disabled={analyzedCount === 0 || isAnalyzing || isSaving}
                 className="mt-6 w-full py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400 flex justify-center items-center"
             >
-                {isSaving ? <Loader2 size={20} className="mr-2 animate-spin" /> : <Save size={20} className="mr-2" />}
+                {isSaving ? <Loader2 size={20} className="mr-2 animate-spin pointer-events-none" /> : <Save size={20} className="mr-2 pointer-events-none" />}
                 {isSaving ? "저장 중..." : `분석 완료 항목 저장 (${analyzedCount}개)`}
             </button>
             
              <button onClick={onClose} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600">
-                <XCircle size={24} />
+                <XCircle size={24} className="pointer-events-none" />
             </button>
         </div>
     );
@@ -589,6 +584,7 @@ const ForgingSpecManager = () => {
     const [userId] = useState("Local_User_ID"); 
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
+    const deferredSearchTerm = useDeferredValue(searchTerm); 
     const [sortOption, setSortOption] = useState('date-desc');
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
@@ -804,9 +800,8 @@ const ForgingSpecManager = () => {
     const filteredAndSortedSpecs = useMemo(() => {
         let result = specs;
         
-        // 검색 필터 (지연된 검색어 사용)
-        if (searchTerm) { // NOTE: searchTerm은 SearchBar에서 이미 debounce되어 넘어옴
-            const term = searchTerm.toLowerCase();
+        if (deferredSearchTerm) {
+            const term = deferredSearchTerm.toLowerCase();
             result = result.filter(s => 
                 s.fileName.toLowerCase().includes(term) || 
                 s.summary?.toLowerCase().includes(term) ||
@@ -826,7 +821,7 @@ const ForgingSpecManager = () => {
                 default: return 0;
             }
         });
-    }, [specs, searchTerm, sortOption]);
+    }, [specs, deferredSearchTerm, sortOption]);
 
     if (!isMounted) return null;
 
@@ -840,10 +835,10 @@ const ForgingSpecManager = () => {
                 </div>
                 <div className="flex gap-2">
                     <button onClick={handleExportData} className="flex items-center px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition text-sm">
-                        <Save size={16} className="mr-1" /> 백업 저장
+                        <Save size={16} className="mr-1 pointer-events-none" /> 백업 저장
                     </button>
                     <button onClick={() => importInputRef.current.click()} className="flex items-center px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition text-sm">
-                        <RefreshCw size={16} className="mr-1" /> 백업 복원
+                        <RefreshCw size={16} className="mr-1 pointer-events-none" /> 백업 복원
                     </button>
                     <input type="file" ref={importInputRef} onChange={handleImportData} accept=".json" className="hidden" />
                 </div>
@@ -861,7 +856,7 @@ const ForgingSpecManager = () => {
                         className={`flex items-center justify-center w-12 rounded-lg border-2 ${specs.length > 0 && selectedIds.size === specs.length ? 'border-indigo-500 bg-indigo-50 text-indigo-600' : 'border-gray-300 bg-white text-gray-400'}`}
                         title={specs.length > 0 && selectedIds.size === specs.length ? "전체 해제" : "전체 선택"}
                     >
-                        {specs.length > 0 && selectedIds.size === specs.length ? <CheckSquare size={20} /> : <Square size={20} />}
+                        {specs.length > 0 && selectedIds.size === specs.length ? <CheckSquare size={20} className="pointer-events-none" /> : <Square size={20} className="pointer-events-none" />}
                     </button>
                     <SearchBar 
                         onSearchChange={setSearchTerm} 
@@ -875,11 +870,11 @@ const ForgingSpecManager = () => {
                             onClick={handleDeleteSelected} 
                             className="flex items-center justify-center py-3 px-6 rounded-lg bg-red-100 text-red-600 font-semibold hover:bg-red-200 whitespace-nowrap transition-colors"
                         >
-                            <Trash2 size={20} className="mr-2" /> 선택 삭제 ({selectedIds.size})
+                            <Trash2 size={20} className="mr-2 pointer-events-none" /> 선택 삭제 ({selectedIds.size})
                         </button>
                     )}
                     <button onClick={() => setModal({ isOpen: true, type: 'upload' })} className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 whitespace-nowrap transition-colors">
-                        <Upload size={20} className="mr-2" /> 시방서 등록
+                        <Upload size={20} className="mr-2 pointer-events-none" /> 시방서 등록
                     </button>
                 </div>
             </div>
@@ -924,7 +919,7 @@ const ForgingSpecManager = () => {
             {confirmModal.isOpen && (
                 <div className="fixed inset-0 z-[60] overflow-y-auto bg-gray-900 bg-opacity-75 flex justify-center items-center p-4">
                      <div className="bg-white rounded-xl max-w-sm w-full shadow-2xl p-6 text-center">
-                        <AlertCircle className="mx-auto text-red-500 mb-4" size={48} />
+                        <AlertCircle className="mx-auto text-red-500 mb-4 pointer-events-none" size={48} />
                         <h3 className="text-lg font-bold text-gray-900 mb-2">삭제 확인</h3>
                         <p className="text-gray-600 mb-6">{confirmModal.message}</p>
                         <div className="flex gap-3 justify-center">
