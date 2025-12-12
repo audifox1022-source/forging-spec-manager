@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
-import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square, AlertCircle } from 'lucide-react';
+import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square, AlertCircle, Eye } from 'lucide-react';
 
 // --- Global Constants ---
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
@@ -22,63 +22,41 @@ const openDB = () => {
             }
         };
         request.onsuccess = (event) => resolve(event.target.result);
-        request.onerror = (event) => {
-            console.error("IndexedDB Open Error:", event.target.error);
-            reject(event.target.error);
-        };
+        request.onerror = (event) => reject(event.target.error);
     });
 };
 
 const saveFileToDB = async (id, file) => {
-    try {
-        const db = await openDB();
-        if (!db) return;
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_NAME], 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            
-            if (!file) {
-                console.warn(`[IndexedDB] 파일이 없어 저장을 건너뜁니다. ID: ${id}`);
-                return resolve();
-            }
+    const db = await openDB();
+    if (!db) return;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        
+        if (!file || !(file instanceof Blob)) {
+            console.warn(`[IndexedDB] Invalid file object for ID: ${id}`, file);
+            return resolve(); 
+        }
 
-            const request = store.put(file, id); 
-            request.onsuccess = () => {
-                console.log(`[IndexedDB] 파일 저장 성공! ID: ${id}, Name: ${file.name}, Size: ${file.size}`);
-                resolve();
-            };
-            request.onerror = (e) => {
-                console.error(`[IndexedDB] 저장 실패 ID: ${id}:`, e.target.error);
-                reject(e.target.error);
-            };
-        });
-    } catch (e) {
-        console.error("[IndexedDB] saveFileToDB Exception:", e);
-    }
+        const request = store.put(file, id);
+        request.onsuccess = () => resolve();
+        request.onerror = (e) => {
+            console.error(`[IndexedDB] Save Error for ${id}:`, e.target.error);
+            reject(e.target.error);
+        };
+    });
 };
 
 const getFileFromDB = async (id) => {
-    try {
-        const db = await openDB();
-        if (!db) return null;
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction([STORE_NAME], 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.get(id);
-            request.onsuccess = (event) => {
-                const result = event.target.result;
-                console.log(`[IndexedDB] 파일 조회 결과 ID: ${id} ->`, result ? "Found" : "Not Found");
-                resolve(result);
-            };
-            request.onerror = (e) => {
-                console.error(`[IndexedDB] 조회 실패 ID: ${id}:`, e.target.error);
-                reject(e.target.error);
-            };
-        });
-    } catch (e) {
-        console.error("[IndexedDB] getFileFromDB Exception:", e);
-        return null;
-    }
+    const db = await openDB();
+    if (!db) return null;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(id);
+        request.onsuccess = (event) => resolve(event.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
 };
 
 const deleteFileFromDB = async (id) => {
@@ -156,7 +134,6 @@ const createInitialItem = () => ({
     error: ''
 });
 
-// 검색바 컴포넌트
 const SearchBar = React.memo(({ onSearchChange, sortOption, onSortChange }) => {
     const [localValue, setLocalValue] = useState("");
 
@@ -199,12 +176,11 @@ const SearchBar = React.memo(({ onSearchChange, sortOption, onSortChange }) => {
 });
 SearchBar.displayName = 'SearchBar';
 
-const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, onToggleSelect }) => {
+const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, onPreviewFile, isSelected, onToggleSelect }) => {
     const [isDownloading, setIsDownloading] = useState(false);
 
     const handleDownloadClick = async () => {
         setIsDownloading(true);
-        console.log(`[SpecCard] 다운로드 요청 ID: ${spec.id}, 파일명: ${spec.fileName}`);
         await onDownload(spec);
         setIsDownloading(false);
     };
@@ -218,7 +194,6 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, o
                 className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1"
                 aria-label={isSelected ? "선택 해제" : "선택"}
             >
-                {/* FIX: 아이콘에 pointer-events-none 추가하여 INP 개선 */}
                 {isSelected ? <CheckSquare className="text-indigo-600 pointer-events-none" size={24} /> : <Square size={24} className="pointer-events-none" />}
             </button>
 
@@ -242,10 +217,18 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, o
                 </div>
             </div>
             <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto mt-2 sm:mt-0 justify-end">
+                {/* NEW: 파일 미리보기 버튼 (눈 모양) */}
+                <button
+                    onClick={() => onPreviewFile(spec)}
+                    className="flex items-center justify-center p-2 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition shadow-md"
+                    title="원본 파일 미리보기"
+                >
+                    <Eye size={18} className="pointer-events-none" /> <span className="ml-1 text-sm sm:hidden">미리보기</span>
+                </button>
                 <button
                     onClick={() => onView(spec)}
                     className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
-                    title="상세보기"
+                    title="요약 정보 보기"
                 >
                     <FileText size={18} className="pointer-events-none" />
                 </button>
@@ -270,7 +253,7 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, o
 });
 SpecCard.displayName = 'SpecCard';
 
-const SpecList = React.memo(({ specs, selectedIds, onToggleSelect, onDelete, onDownload, onView }) => {
+const SpecList = React.memo(({ specs, selectedIds, onToggleSelect, onDelete, onDownload, onView, onPreviewFile }) => {
     if (specs.length === 0) {
         return (
             <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
@@ -290,7 +273,8 @@ const SpecList = React.memo(({ specs, selectedIds, onToggleSelect, onDelete, onD
                     onToggleSelect={onToggleSelect}
                     onDelete={onDelete}
                     onDownload={onDownload} 
-                    onView={onView} 
+                    onView={onView}
+                    onPreviewFile={onPreviewFile}
                 />
             ))}
         </div>
@@ -626,16 +610,14 @@ const ForgingSpecManager = () => {
     }, []);
 
     const handleSave = useCallback(async (newSpecs) => { 
-        // FIX: 모든 파일 저장 약속(Promise)을 기다림 (IndexedDB 저장)
         const savePromises = newSpecs.map(spec => {
             if (spec.file) {
-                console.log(`[handleSave] 저장 시도: ${spec.fileName} (ID: ${spec.id})`);
-                return saveFileToDB(spec.id, spec.file);
+                return saveFileToDB(spec.id, spec.file).catch(err => console.error("File save failed", err));
             }
             return Promise.resolve();
         });
 
-        await Promise.all(savePromises); // 저장 완료 대기
+        await Promise.all(savePromises); 
 
         const savedData = newSpecs.map(spec => ({
              id: spec.id,
@@ -676,7 +658,6 @@ const ForgingSpecManager = () => {
             const fileBlob = await getFileFromDB(spec.id);
             
             if (fileBlob) {
-                console.log(`[Download] 원본 파일 발견. 다운로드 시작: ${spec.fileName}`);
                 const url = URL.createObjectURL(fileBlob);
                 const link = document.createElement("a");
                 link.href = url;
@@ -710,6 +691,27 @@ const ForgingSpecManager = () => {
         }
     }, []);
 
+    const handlePreviewFile = useCallback(async (spec) => {
+        if (spec.fileType !== 'PDF') {
+            alert("현재 PDF 파일만 미리보기가 지원됩니다.\n다른 형식의 파일은 다운로드하여 확인해주세요.");
+            return;
+        }
+
+        try {
+            const fileBlob = await getFileFromDB(spec.id);
+            if (fileBlob) {
+                const url = URL.createObjectURL(fileBlob);
+                setModal({ isOpen: true, type: 'file-view', url, fileName: spec.fileName });
+            } else {
+                alert("원본 파일을 찾을 수 없어 미리보기를 실행할 수 없습니다.");
+            }
+        } catch (e) {
+            console.error("Preview failed:", e);
+            alert("미리보기를 불러오는 중 오류가 발생했습니다.");
+        }
+    }, []);
+
+
     const handleToggleSelect = useCallback((id) => {
         setSelectedIds(prev => {
             const newSet = new Set(prev);
@@ -734,10 +736,8 @@ const ForgingSpecManager = () => {
             isOpen: true,
             message: `선택한 ${selectedIds.size}개의 항목을 정말 삭제하시겠습니까? (원본 파일도 함께 삭제됩니다)`,
             onConfirm: () => {
-                // 1. 모달 닫기 (INP 개선)
                 setConfirmModal({ isOpen: false, message: '', onConfirm: null });
                 
-                // 2. 삭제 처리 지연 (INP 개선)
                 setTimeout(() => {
                     selectedIds.forEach(id => deleteFileFromDB(id));
 
@@ -766,9 +766,7 @@ const ForgingSpecManager = () => {
 
     const handleImportData = (e) => {
         const file = e.target.files[0];
-        // FIX: 입력 초기화 (즉시)
         e.target.value = '';
-
         if (!file) return;
 
         const reader = new FileReader();
@@ -776,7 +774,6 @@ const ForgingSpecManager = () => {
             try {
                 const importedData = JSON.parse(event.target.result);
                 if (Array.isArray(importedData)) {
-                    // FIX: UI 차단 방지 (setTimeout)
                     setTimeout(() => {
                         setSpecs(prevSpecs => {
                             const mergedSpecs = [...importedData, ...prevSpecs];
@@ -849,7 +846,6 @@ const ForgingSpecManager = () => {
             )}
 
             <div className="flex flex-col xl:flex-row space-y-4 xl:space-y-0 xl:space-x-4 mb-8">
-                {/* FIX: SearchBar component handles its own debounce */}
                 <div className="relative flex-grow flex gap-2">
                     <button 
                         onClick={handleSelectAll}
@@ -885,12 +881,13 @@ const ForgingSpecManager = () => {
                 onToggleSelect={handleToggleSelect}
                 onDelete={handleDelete}
                 onDownload={handleDownloadSpec}
+                onPreviewFile={handlePreviewFile}
                 onView={(s) => setModal({ isOpen: true, type: 'preview', data: s })}
             />
 
             {modal.isOpen && (
                 <div className="fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 flex justify-center items-center p-4">
-                    <div className="bg-white rounded-xl max-w-xl w-full shadow-2xl relative">
+                    <div className={`bg-white rounded-xl shadow-2xl relative ${modal.type === 'file-view' ? 'w-full max-w-5xl h-[85vh]' : 'max-w-xl w-full'}`}>
                         {modal.type === 'upload' && (
                             <SpecUploadModal onClose={() => setModal({ isOpen: false })} onSave={handleSave} analyzeFunction={generateSpecMetadata} />
                         )}
@@ -910,6 +907,19 @@ const ForgingSpecManager = () => {
                                     ))}
                                 </div>
                                 <button onClick={() => setModal({ isOpen: false })} className="mt-6 w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">닫기</button>
+                            </div>
+                        )}
+                        {modal.type === 'file-view' && (
+                            <div className="flex flex-col h-full">
+                                <div className="flex justify-between items-center p-4 border-b">
+                                    <h3 className="text-lg font-bold truncate pr-4">{modal.fileName}</h3>
+                                    <button onClick={() => { URL.revokeObjectURL(modal.url); setModal({ isOpen: false }); }} className="text-gray-500 hover:text-gray-700">
+                                        <XCircle size={24} />
+                                    </button>
+                                </div>
+                                <div className="flex-grow bg-gray-100 p-4 overflow-hidden">
+                                    <iframe src={modal.url} className="w-full h-full rounded border border-gray-300" title="PDF Preview" />
+                                </div>
                             </div>
                         )}
                     </div>
