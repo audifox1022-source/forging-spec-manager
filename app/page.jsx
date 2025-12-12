@@ -11,32 +11,33 @@ const getConfig = () => {
     let fbConfig = {};
     let gApiKey = "";
     
-    try {
-        // 1. Canvas/Internal Environment Check
-        if (typeof __firebase_config !== 'undefined') {
-            fbConfig = JSON.parse(__firebase_config);
-        } 
-        // 2. Next.js / StackBlitz / Vercel Environment Check
-        else if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_FIREBASE_CONFIG) {
-            const envConfig = process.env.NEXT_PUBLIC_FIREBASE_CONFIG;
-            fbConfig = typeof envConfig === 'string' ? JSON.parse(envConfig) : envConfig;
-        }
+    // 1. 고객님이 직접 제공한 설정 값을 최우선으로 사용합니다. (하드코딩)
+    const hardcodedFirebaseConfig = {
+        apiKey: "AIzaSyCB43xipDeVyZVu4sAdtF0lGFIzzCfrsIc",
+        authDomain: "forging-spec-manager.firebaseapp.com",
+        projectId: "forging-spec-manager",
+        storageBucket: "forging-spec-manager.firebasestorage.app",
+        messagingSenderId: "299326184664",
+        appId: "1:299326184664:web:cfef24589a3cfe4a504bad",
+        measurementId: "G-0935D7SKB1"
+    };
 
-        // API Key Check
-        if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+    // 2. 환경 변수에서 Gemini API Key와 Firebase Config를 로드합니다.
+    if (typeof process !== 'undefined') {
+        if (process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
             gApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
         } 
-    } catch (e) {
-        console.warn("Config loading error:", e);
     }
     
+    // Canvas 환경 변수 로직은 제거하고 하드코딩된 값만 사용합니다.
+    fbConfig = hardcodedFirebaseConfig;
+
     // Fallback/Safety net for missing critical IDs (ProjectID, APIKey)
     if (!fbConfig.projectId) {
         fbConfig.projectId = 'default-project-' + (Math.random().toString(36).substring(2, 8));
     }
+    // apiKey는 하드코딩되었지만, 혹시 모를 경우를 대비해 한 번 더 체크 (G-Key를 쓰지는 않음)
     if (!fbConfig.apiKey && gApiKey) {
-        // Fallback: Use Gemini key as Firebase API key if Firebase key is missing, 
-        // only if needed for initialisation checks.
         fbConfig.apiKey = gApiKey;
     }
 
@@ -354,7 +355,7 @@ const ForgingSpecManager = () => {
                     <div className="text-left bg-gray-100 p-4 rounded text-sm text-gray-700 overflow-x-auto">
                         <p className="font-semibold mb-1">앱이 사용 중인 설정값 (디버그):</p>
                         <pre className="bg-gray-800 text-white p-2 rounded mt-2 text-xs overflow-x-auto">
-                            {/* 고객님이 제공한 하드코딩된 값이 표시되어야 함 */}
+                            {/* 고객님이 제공한 하드코딩된 값이 표시됨 */}
                             {`{
   "projectId": "${displayProjectId}",
   "apiKey": "${displayApiKey}",
