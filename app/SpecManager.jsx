@@ -2,98 +2,49 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'; // FIX: React 제거
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, orderBy, serverTimestamp, setLogLevel } from 'firebase/firestore'; // setLogLevel 추가
+import { getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, orderBy, serverTimestamp } from 'firebase/firestore'; 
 import { Search, FileText, Download, Upload, Trash2, Loader2, XCircle, Zap, File, ListChecks, AlertTriangle } from 'lucide-react';
 
-// --- Configuration Helper ---
-// 환경 변수나 전역 변수에서 안전하게 값을 가져오는 함수
-const getConfig = () => {
-    let fbConfig = {};
-    let gApiKey = "";
-    let isVercel = false;
-
-    // 1. 고객님이 직접 제공한 설정 값을 최우선으로 사용합니다.
-    // **이 값은 Firebase Console에서 복사한 값입니다.**
-    const hardcodedFirebaseConfig = {
-        apiKey: "AIzaSyCB43xipDeVyZVu4sAdtF0lGFIzzCfrsIc",
-        authDomain: "forging-spec-manager.firebaseapp.com",
-        projectId: "forging-spec-manager",
-        storageBucket: "forging-spec-manager.firebasestorage.app",
-        messagingSenderId: "299326184664",
-        appId: "1:299326184664:web:cfef24589a3cfe4a504bad",
-        measurementId: "G-0935D7SKB1"
-    };
-    
-    // 2. 환경 변수에서 Gemini API Key와 Firebase Config를 로드합니다.
-    if (typeof process !== 'undefined') {
-        if (process.env.NEXT_PUBLIC_FIREBASE_CONFIG) {
-            isVercel = true;
-            try {
-                const envConfig = process.env.NEXT_PUBLIC_FIREBASE_CONFIG;
-                fbConfig = typeof envConfig === 'string' ? JSON.parse(envConfig) : envConfig;
-            } catch (e) {
-                console.error("Failed to parse NEXT_PUBLIC_FIREBASE_CONFIG:", e);
-                fbConfig = {}; 
-            }
-        }
-        if (process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
-            gApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-        }
-    }
-
-    // 3. Canvas/Internal Environment Check (Fallback/Primary in Canvas)
-    if (typeof __firebase_config !== 'undefined' && !isVercel) {
-        try {
-            fbConfig = JSON.parse(__firebase_config);
-        } catch (e) {
-            console.error("Failed to parse __firebase_config:", e);
-        }
-    }
-    
-    // FIX: 하드코딩된 설정을 환경 변수 값보다 강제적으로 우선 적용합니다.
-    // 이는 환경 변수 파싱 문제나 런타임 변수 누락 문제를 우회합니다.
-    if (hardcodedFirebaseConfig.apiKey && hardcodedFirebaseConfig.projectId) {
-        fbConfig = hardcodedFirebaseConfig;
-    }
-    
-    // FIX: If projectId is missing, use the default app ID for stability
-    const fallbackProjectId = 'canvas-project-' + (Math.random().toString(36).substring(2, 8));
-    if (!fbConfig.projectId) {
-        fbConfig.projectId = fallbackProjectId;
-        console.warn("Firebase projectId was set to a default value for initialization.");
-    }
-    if (!fbConfig.storageBucket) {
-        fbConfig.storageBucket = `${fbConfig.projectId}.appspot.com`;
-    }
-
-
-    return { fbConfig, gApiKey, isVercel };
+// --- Configuration Values (고객님이 제공한 값을 코드에 직접 적용) ---
+const HARDCODED_FIREBASE_CONFIG = {
+    apiKey: "AIzaSyCB43xipDeVyZVu4sAdtF0lGFIzzCfrsIc",
+    authDomain: "forging-spec-manager.firebaseapp.com",
+    projectId: "forging-spec-manager",
+    storageBucket: "forging-spec-manager.firebasestorage.app",
+    messagingSenderId: "299326184664",
+    appId: "1:299326184664:web:cfef24589a3cfe4a504bad",
+    measurementId: "G-0935D7SKB1"
 };
+
+const firebaseConfig = HARDCODED_FIREBASE_CONFIG;
+
+// Gemini API Key는 환경 변수에서 읽어오거나 비워둡니다 (Canvas에서 자동 주입)
+let envApiKey = "";
+if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+    envApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+}
 
 // Helper function to truncate keys for safe display
 const truncateKey = (key) => (key && typeof key === 'string' && key.length > 10 ? key.substring(0, 6) + '...' + key.substring(key.length - 4) : key || 'N/A');
-
-const { fbConfig: firebaseConfig, gApiKey: envApiKey, isVercel } = getConfig();
 
 // FIX: Sanitize the appId to prevent Firestore path errors caused by slashes in the environment variable.
 const sanitizeAppId = (id) => {
     if (typeof id === 'string') {
         return id.replace(/\//g, '-').replace(/\./g, '_');
     }
-    return 'spec-manager-v1';
+    // 하드코딩된 projectId를 앱 ID 폴백으로 사용
+    return firebaseConfig.projectId || 'spec-manager-v1'; 
 };
 
 // --- Global Variables ---
 let dynamicAppId = 'spec-manager-v1';
 if (typeof __app_id !== 'undefined') {
     dynamicAppId = sanitizeAppId(__app_id);
-} else if (isVercel && typeof process !== 'undefined' && process.env.NEXT_PUBLIC_VERCEL_PROJECT_ID) {
-    dynamicAppId = sanitizeAppId(process.env.NEXT_PUBLIC_VERCEL_PROJECT_ID);
+} else {
+    dynamicAppId = sanitizeAppId(firebaseConfig.projectId);
 }
 const appId = dynamicAppId;
 
-// initialAuthToken은 사용하지 않으므로 주석 처리하거나 무시합니다.
-// const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
 const apiKey = envApiKey || ""; 
 
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
@@ -121,17 +72,14 @@ let app, db, auth;
 let globalInitError = null; // Renamed to clearly differentiate from local state
 
 try {
-    // Check if config is valid (has apiKey at minimum)
+    // Check if config is valid (API Key가 하드코딩되었으므로 반드시 유효함)
     if (firebaseConfig && firebaseConfig.apiKey) {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
-        // FIX: Firebase SDK 디버그 로깅 추가
-        setLogLevel('debug');
+        // setLogLevel('debug'); // 디버그 로깅 제거 (성능 저하 방지)
     } else {
-        // Collect error message if config is missing
         globalInitError = "Firebase Configuration (apiKey, projectId, etc.)이 누락되었습니다.";
-        console.warn(globalInitError);
     }
 } catch (e) {
     console.error("Firebase initialization failed:", e);
@@ -141,58 +89,53 @@ try {
 // Data Structure: /artifacts/{appId}/users/{userId}/forging_specs/{docId}
 
 const ForgingSpecManager = () => {
-    // isAuthReady: Firebase 인증 및 로그인 완료 여부 (데이터 로드 시작 조건)
     const [isAuthReady, setIsAuthReady] = useState(false); 
     const [userId, setUserId] = useState(null);
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const [loading, setLoading] = useState(true); // FIX: 초기 로딩 상태를 true로 설정
+    const [loading, setLoading] = useState(true); 
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
+    
+    // Canvas의 __initial_auth_token 사용을 완전히 방지하기 위해 null로 고정합니다.
+    const initialAuthToken = null; 
 
     // 1. Firebase Authentication & Initialization
     useEffect(() => {
-        // FIX: auth 객체가 없으면 Firebase 초기화가 실패한 것이므로 바로 종료
         if (!auth) {
-            setLoading(false); // 로딩 종료
+            setLoading(false); 
             return; 
         }
 
         const handleAuthResult = (user) => {
             if (user) {
                 setUserId(user.uid);
-                setIsAuthReady(true); // 유저 ID 확보 시 인증 완료 상태로 설정
+                setIsAuthReady(true); 
             } else {
                 setUserId(null);
-                setIsAuthReady(false); // 유저 ID 미확보 시 미완료 상태로 설정
-                setError("Firebase 연결 실패: 익명 인증 설정을 확인하세요."); // 오류 메시지 명확화
+                setIsAuthReady(false); 
+                setError("Firebase 연결 실패: 익명 인증 설정을 확인하세요."); 
             }
-            setLoading(false); // 모든 시도 후 로딩 종료
+            setLoading(false); 
         };
 
         const trySignInAnonymously = async () => {
-            // FIX: 300ms 지연 추가로 네트워크 안정성 확보
             await new Promise(resolve => setTimeout(resolve, 300)); 
             
             try {
-                // FIX: 무조건 익명 로그인만 시도 (custom-token-mismatch 회피)
+                // 무조건 익명 로그인 시도
                 await signInAnonymously(auth);
             } catch (e) {
                 console.error("Sign-in attempt failed:", e);
-                // 강제적인 에러 메시지 설정
                 setError("로그인 시도 실패: 익명 인증 설정을 확인하세요.");
                 setLoading(false);
             }
         };
 
-        // Custom Token Mismatch 오류를 피하기 위해, onAuthStateChanged에서 user가 null일 경우
-        // 즉시 익명 로그인을 시도하도록 로직을 단순화합니다.
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
                 handleAuthResult(user);
             } else {
-                // user가 null일 때(최초 접속 또는 로그아웃 상태) 익명 로그인을 시도합니다.
-                // 토큰 관련 로직은 제거합니다.
                 trySignInAnonymously();
             }
         });
@@ -201,10 +144,9 @@ const ForgingSpecManager = () => {
         const timeoutId = setTimeout(() => {
             if (loading && !isAuthReady) {
                 setLoading(false);
-                // 인증 실패 상태를 더 명확하게 설정
                 setError(prev => prev || "인증 타임아웃: 네트워크 상태, Firebase 도메인/인증 설정을 확인하세요.");
             }
-        }, 5000); // 5초 타임아웃 설정
+        }, 5000); 
 
         return () => {
             clearTimeout(timeoutId);
@@ -234,12 +176,9 @@ const ForgingSpecManager = () => {
                 if (error) setError(''); // Clear error if data is fetched successfully
             }, (e) => {
                 console.error("Firestore data fetch failed:", e);
-                // Security Rule Violation (permission-denied)을 catch하지 못하도록 수정.
-                // Firebase Rules 설정이 중요함을 강조.
                 if (e.code !== 'permission-denied') { 
                     setError("데이터 로딩 중 오류가 발생했습니다. (연결 문제 등)");
                 } else {
-                    // 이 오류가 발생하면 Firebase Rules을 점검해야 함을 사용자에게 안내
                     setError("데이터베이스 권한 오류: Firestore 보안 규칙을 확인하세요. (익명 사용자 읽기/쓰기 허용)");
                 }
             });
@@ -307,7 +246,6 @@ const ForgingSpecManager = () => {
 
     // Spec Registration (Handles saving of PRE-ANALYZED specs)
     const handleSaveAnalyzedSpecs = async (specsToSave) => {
-        // FIX: 저장 시점에도 userId 및 db 유효성을 재확인
         if (!userId || !db) {
             setError("인증 또는 데이터베이스 연결이 준비되지 않았습니다. 잠시 후 재시도하세요.");
             return;
@@ -769,7 +707,7 @@ const ForgingSpecManager = () => {
                         **💡 다중 폴더 등록 안내:** 폴더 선택 시 한 번에 하나의 폴더만 지정할 수 있습니다. 여러 폴더의 파일을 등록하려면 **폴더 선택을 반복**하거나, **여러 파일을 한 번에 선택**하십시오. 파일들은 목록에 누적됩니다.
                     </p>
                     {uploadQueue.length > 0 && (
-                        <p className="text-sm text-gray-500 mt-2">총 {uploadQueue.length}개의 파일이 목록에 준비되었습니다.</p>
+                        <p className="text-sm text-gray-500 mt-2">총 {uploadQueue.length}개의 파일이 목록에 준비되었습니다。</p>
                     )}
                 </div>
 
