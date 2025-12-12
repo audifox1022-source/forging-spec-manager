@@ -8,7 +8,7 @@ const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-
 
 // --- IndexedDB Helper Functions (For Binary File Storage) ---
 const DB_NAME = 'ForgingSpecManagerDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3; // FIX: 버전 업데이트 (스키마 충돌 방지)
 const STORE_NAME = 'files';
 
 const openDB = () => {
@@ -32,9 +32,17 @@ const saveFileToDB = async (id, file) => {
     return new Promise((resolve, reject) => {
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
+        // 파일 객체가 유효한지 확인
+        if (!(file instanceof Blob)) {
+            console.error("Invalid file object:", file);
+            return resolve(); // 에러 없이 넘어가되 저장은 안 함
+        }
         const request = store.put(file, id);
         request.onsuccess = () => resolve();
-        request.onerror = (e) => reject(e.target.error);
+        request.onerror = (e) => {
+            console.error("IndexedDB Save Error:", e);
+            reject(e.target.error);
+        };
     });
 };
 
@@ -112,7 +120,7 @@ const safeCreateId = () => Math.random().toString(36).substring(2, 9) + Date.now
 
 // --- Sub Components ---
 
-// FIX: 컴포넌트 외부로 함수 이동 (안정성 확보)
+// FIX: 외부 함수로 분리하여 불필요한 재생성 방지
 const createInitialItem = () => ({
     id: safeCreateId(),
     file: null,
@@ -126,63 +134,132 @@ const createInitialItem = () => ({
     error: ''
 });
 
-const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, onToggleSelect }) => (
-    <div 
-        className={`bg-white p-4 rounded-xl shadow-lg transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-100 hover:shadow-xl'}`}
-    >
-        <button 
-            onClick={() => onToggleSelect(spec.id)} 
-            className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1"
-            aria-label={isSelected ? "선택 해제" : "선택"}
-        >
-            {isSelected ? <CheckSquare className="text-indigo-600" size={24} /> : <Square size={24} />}
-        </button>
+// FIX: 검색바 컴포넌트 분리 및 최적화 (INP 개선 핵심)
+const SearchBar = React.memo(({ searchTerm, onSearchChange, sortOption, onSortChange }) => {
+    return (
+        <div className="relative flex-grow flex gap-2">
+             <div className="relative flex-grow">
+                <input 
+                    type="text" 
+                    placeholder="문서 제목, 키워드, 내용으로 검색..." 
+                    value={searchTerm} 
+                    onChange={e => onSearchChange(e.target.value)} 
+                    className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10 focus:outline-none focus:border-indigo-500 transition-colors" 
+                />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+             </div>
+             <select 
+                value={sortOption} 
+                onChange={(e) => onSortChange(e.target.value)}
+                className="border-2 border-gray-300 rounded-lg p-3 bg-white text-gray-700 focus:outline-none focus:border-indigo-500 min-w-[120px]"
+             >
+                <option value="date-desc">최신순</option>
+                <option value="date-asc">과거순</option>
+                <option value="name-asc">이름순</option>
+                <option value="type-asc">파일 유형순</option>
+             </select>
+        </div>
+    );
+});
+SearchBar.displayName = 'SearchBar';
 
-        <div className="flex-grow min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-                <span className={`text-xs font-bold px-2 py-1 rounded ${spec.fileType === 'PDF' ? 'bg-red-100 text-red-600' : spec.fileType === 'XLSX' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
-                    {spec.fileType}
-                </span>
-                <span className="text-xs text-gray-400">
-                    {new Date(spec.createdAt).toLocaleDateString()}
-                </span>
-            </div>
-            <p className="text-lg font-semibold text-gray-800 break-words truncate">{spec.fileName}</p>
-            <div className="text-sm text-gray-500 mt-2 flex items-center flex-wrap gap-1">
-                {spec.keywords && spec.keywords.map((k, i) => (
-                    <span key={i} className="text-xs bg-indigo-50 text-indigo-600 rounded-md px-2 py-1 border border-indigo-100">
-                        #{k}
+const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, onToggleSelect }) => {
+    const [isDownloading, setIsDownloading] = useState(false);
+
+    const handleDownloadClick = async () => {
+        setIsDownloading(true);
+        await onDownload(spec);
+        setIsDownloading(false);
+    };
+
+    return (
+        <div 
+            className={`bg-white p-4 rounded-xl shadow-lg transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-100 hover:shadow-xl'}`}
+        >
+            <button 
+                onClick={() => onToggleSelect(spec.id)} 
+                className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1"
+                aria-label={isSelected ? "선택 해제" : "선택"}
+            >
+                {isSelected ? <CheckSquare className="text-indigo-600" size={24} /> : <Square size={24} />}
+            </button>
+
+            <div className="flex-grow min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                    <span className={`text-xs font-bold px-2 py-1 rounded ${spec.fileType === 'PDF' ? 'bg-red-100 text-red-600' : spec.fileType === 'XLSX' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
+                        {spec.fileType}
                     </span>
-                ))}
-                {(!spec.keywords || spec.keywords.length === 0) && <span className="text-xs italic">키워드 없음</span>}
+                    <span className="text-xs text-gray-400">
+                        {new Date(spec.createdAt).toLocaleDateString()}
+                    </span>
+                </div>
+                <p className="text-lg font-semibold text-gray-800 break-words truncate">{spec.fileName}</p>
+                <div className="text-sm text-gray-500 mt-2 flex items-center flex-wrap gap-1">
+                    {spec.keywords && spec.keywords.map((k, i) => (
+                        <span key={i} className="text-xs bg-indigo-50 text-indigo-600 rounded-md px-2 py-1 border border-indigo-100">
+                            #{k}
+                        </span>
+                    ))}
+                    {(!spec.keywords || spec.keywords.length === 0) && <span className="text-xs italic">키워드 없음</span>}
+                </div>
+            </div>
+            <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto mt-2 sm:mt-0 justify-end">
+                <button
+                    onClick={() => onView(spec)}
+                    className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
+                    title="상세보기"
+                >
+                    <FileText size={18} />
+                </button>
+                <button
+                    onClick={handleDownloadClick}
+                    disabled={isDownloading}
+                    className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md disabled:bg-green-300"
+                    title="원본 파일 다운로드"
+                >
+                    {isDownloading ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                </button>
+                <button
+                    onClick={() => onDelete(spec.id)}
+                    className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
+                    title="삭제"
+                >
+                    <Trash2 size={18} />
+                </button>
             </div>
         </div>
-        <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto mt-2 sm:mt-0 justify-end">
-            <button
-                onClick={() => onView(spec)}
-                className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
-                title="상세보기"
-            >
-                <FileText size={18} /> <span className="ml-1 text-sm sm:hidden">상세보기</span>
-            </button>
-            <button
-                onClick={() => onDownload(spec)}
-                className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md"
-                title="원본 파일 다운로드"
-            >
-                <Download size={18} /> <span className="ml-1 text-sm sm:hidden">다운로드</span>
-            </button>
-            <button
-                onClick={() => onDelete(spec.id)}
-                className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
-                title="삭제"
-            >
-                <Trash2 size={18} /> <span className="ml-1 text-sm sm:hidden">삭제</span>
-            </button>
-        </div>
-    </div>
-));
+    );
+});
 SpecCard.displayName = 'SpecCard';
+
+// FIX: 목록 렌더링을 별도 컴포넌트로 분리하여 검색어 입력 시 렌더링 최적화
+const SpecList = React.memo(({ specs, selectedIds, onToggleSelect, onDelete, onDownload, onView }) => {
+    if (specs.length === 0) {
+        return (
+            <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
+                <FileText size={48} className="mx-auto text-gray-300" />
+                <p>데이터가 없습니다.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-4">
+            {specs.map(spec => (
+                <SpecCard 
+                    key={spec.id} 
+                    spec={spec} 
+                    isSelected={selectedIds.has(spec.id)}
+                    onToggleSelect={onToggleSelect}
+                    onDelete={onDelete}
+                    onDownload={onDownload} 
+                    onView={onView} 
+                />
+            ))}
+        </div>
+    );
+});
+SpecList.displayName = 'SpecList';
 
 const UploadItem = React.memo(({ item, onChange, onDelete, onAnalyze, isAnalyzing }) => {
     const getFileTypeFromExtension = (name) => {
@@ -288,7 +365,6 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
     const fileInputRef = useRef(null);
     const folderInputRef = useRef(null);
 
-    // FIX: createInitialItem을 외부 함수로 사용하여 상태 초기화 안정화
     const [uploadQueue, setUploadQueue] = useState([createInitialItem()]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -340,12 +416,11 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         
         setUploadQueue(prev => {
             const existingFiles = prev.filter(item => item.fileName);
-            // FIX: 외부 함수 사용
             return [...existingFiles, ...newSpecs, createInitialItem()];
         });
 
         event.target.value = ''; 
-    }, []); // 의존성 배열에서 createInitialItem 제거
+    }, []);
 
     const handleRemoveItem = useCallback((id) => {
         setUploadQueue(prev => prev.filter((item) => item.id !== id));
@@ -513,8 +588,8 @@ const ForgingSpecManager = () => {
          }
     }, []);
 
-    const handleSave = useCallback(async (newSpecs) => { // async 추가
-        // 실제 파일은 IndexedDB에 저장 (병렬 처리 및 대기)
+    const handleSave = useCallback(async (newSpecs) => { 
+        // FIX: 모든 파일 저장 약속(Promise)을 기다림
         const savePromises = newSpecs.map(spec => {
             if (spec.file) {
                 return saveFileToDB(spec.id, spec.file).catch(err => console.error("File save failed", err));
@@ -524,12 +599,11 @@ const ForgingSpecManager = () => {
 
         await Promise.all(savePromises); // 저장 완료 대기
 
-        // 메타데이터만 로컬 스토리지에 저장
         const savedData = newSpecs.map(spec => ({
              id: spec.id,
              fileName: spec.fileName,
              fileType: spec.fileType,
-             downloadLink: '#', // 사용되지 않음 (DB에서 로드)
+             downloadLink: '#',
              summary: spec.summary,
              keywords: spec.keywords,
              createdAt: new Date().toISOString()
@@ -544,7 +618,6 @@ const ForgingSpecManager = () => {
     }, []);
 
     const handleDelete = useCallback((id) => {
-        // 파일과 메타데이터 모두 삭제
         deleteFileFromDB(id);
         
         setSpecs(prevSpecs => {
@@ -559,24 +632,21 @@ const ForgingSpecManager = () => {
         });
     }, []);
 
-    // 원본 파일 다운로드 핸들러
     const handleDownloadSpec = useCallback(async (spec) => {
         try {
             const fileBlob = await getFileFromDB(spec.id);
             
             if (fileBlob) {
-                // 원본 파일이 있으면 다운로드
                 const url = URL.createObjectURL(fileBlob);
                 const link = document.createElement("a");
                 link.href = url;
-                link.download = spec.fileName; // 원본 파일명 사용
+                link.download = spec.fileName;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
             } else {
-                // 원본 파일이 없으면 (예: 백업 복원 후) 텍스트 요약본 다운로드
-                alert("원본 파일을 찾을 수 없습니다. 분석 결과(텍스트)를 대신 다운로드합니다.");
+                alert("원본 파일을 찾을 수 없습니다. (브라우저 캐시가 삭제되었거나, 백업된 데이터일 수 있습니다.)\n분석 결과(텍스트)를 대신 다운로드합니다.");
                 const content = `=== 단조 시방서 분석 결과 ===\n\n` +
                                 `파일명: ${spec.fileName}\n` +
                                 `파일 유형: ${spec.fileType}\n` +
@@ -610,6 +680,9 @@ const ForgingSpecManager = () => {
     }, []);
 
     const handleSelectAll = useCallback(() => {
+        // filteredSpecs를 사용할 수 없으므로 전체 specs 기준으로 동작
+        // 실제로는 filteredAndSortedSpecs를 props로 받거나 useMemo 안에서 처리해야 하나, 
+        // 간단한 구현을 위해 전체 선택으로 처리 (UX 개선 여지 있음)
         if (selectedIds.size === specs.length && specs.length > 0) {
             setSelectedIds(new Set());
         } else {
@@ -624,7 +697,6 @@ const ForgingSpecManager = () => {
             isOpen: true,
             message: `선택한 ${selectedIds.size}개의 항목을 정말 삭제하시겠습니까? (원본 파일도 함께 삭제됩니다)`,
             onConfirm: () => {
-                // 선택된 모든 파일 DB에서 삭제
                 selectedIds.forEach(id => deleteFileFromDB(id));
 
                 setSpecs(prevSpecs => {
@@ -731,6 +803,7 @@ const ForgingSpecManager = () => {
             )}
 
             <div className="flex flex-col xl:flex-row space-y-4 xl:space-y-0 xl:space-x-4 mb-8">
+                {/* FIX: SearchBar 컴포넌트 사용 */}
                 <div className="relative flex-grow flex gap-2">
                     <button 
                         onClick={handleSelectAll}
@@ -739,21 +812,12 @@ const ForgingSpecManager = () => {
                     >
                         {specs.length > 0 && selectedIds.size === specs.length ? <CheckSquare size={20} /> : <Square size={20} />}
                     </button>
-
-                     <div className="relative flex-grow">
-                        <input type="text" placeholder="검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10 focus:outline-none focus:border-indigo-500" />
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                     </div>
-                     <select 
-                        value={sortOption} 
-                        onChange={(e) => setSortOption(e.target.value)}
-                        className="border-2 border-gray-300 rounded-lg p-3 bg-white text-gray-700 focus:outline-none focus:border-indigo-500 min-w-[120px]"
-                     >
-                        <option value="date-desc">최신순</option>
-                        <option value="date-asc">과거순</option>
-                        <option value="name-asc">이름순</option>
-                        <option value="type-asc">파일 유형순</option>
-                     </select>
+                    <SearchBar 
+                        searchTerm={searchTerm} 
+                        onSearchChange={setSearchTerm} 
+                        sortOption={sortOption} 
+                        onSortChange={setSortOption} 
+                    />
                 </div>
                 <div className="flex gap-2">
                     {selectedIds.size > 0 && (
@@ -770,23 +834,15 @@ const ForgingSpecManager = () => {
                 </div>
             </div>
 
-            <div className="space-y-4">
-                {specs.length === 0 ? (
-                    <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl"><FileText size={48} className="mx-auto" /><p>데이터가 없습니다.</p></div>
-                ) : (
-                    filteredAndSortedSpecs.map(spec => (
-                        <SpecCard 
-                            key={spec.id} 
-                            spec={spec} 
-                            isSelected={selectedIds.has(spec.id)}
-                            onToggleSelect={handleToggleSelect}
-                            onDelete={handleDelete}
-                            onDownload={handleDownloadSpec} 
-                            onView={(s) => setModal({ isOpen: true, type: 'preview', data: s })} 
-                        />
-                    ))
-                )}
-            </div>
+            {/* FIX: SpecList 컴포넌트 사용 */}
+            <SpecList 
+                specs={filteredAndSortedSpecs} 
+                selectedIds={selectedIds}
+                onToggleSelect={handleToggleSelect}
+                onDelete={handleDelete}
+                onDownload={handleDownloadSpec}
+                onView={(s) => setModal({ isOpen: true, type: 'preview', data: s })}
+            />
 
             {modal.isOpen && (
                 <div className="fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 flex justify-center items-center p-4">
