@@ -8,10 +8,11 @@ const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-
 
 // Gemini API Key를 환경 변수에서 가져오는 안전한 로직
 const getCurrentApiKey = () => {
+    // Vercel 환경 변수에서 NEXT_PUBLIC_GEMINI_API_KEY를 가져옴
     if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
         return process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     }
-    // 하드코딩된 API_KEY가 빈 문자열이므로 사용하지 않음.
+    // Canvas 환경이나 로컬 환경에서 API 키가 없는 경우
     return ""; 
 };
 const CURRENT_API_KEY = getCurrentApiKey();
@@ -71,10 +72,12 @@ const ForgingSpecManager = () => {
 
     // 1. 초기 로드 (Local Storage에서 데이터 가져오기)
     useEffect(() => {
-        setLoading(true);
-        const initialSpecs = loadSpecsFromLocalStorage();
-        setSpecs(initialSpecs);
-        setLoading(false);
+        if (typeof window !== 'undefined') {
+            setLoading(true);
+            const initialSpecs = loadSpecsFromLocalStorage();
+            setSpecs(initialSpecs);
+            setLoading(false);
+        }
     }, []);
 
     // --- Gemini API Handler: Generate Summary & Keywords ---
@@ -150,6 +153,7 @@ const ForgingSpecManager = () => {
 
         try {
             setSpecs(prevSpecs => {
+                // 저장된 새 데이터를 기존 목록 앞에 추가하여 최신 순서 유지
                 const newSpecs = [...specsToSaveData, ...prevSpecs];
                 saveSpecsToLocalStorage(newSpecs);
                 return newSpecs;
@@ -346,7 +350,8 @@ const ForgingSpecManager = () => {
     );
 
     const SpecUploadModal = () => {
-        const initialItem = { 
+        // Initial item generator function
+        const createInitialItem = () => ({
             id: crypto.randomUUID(), // 로컬에서 고유 ID 생성
             fileName: '', 
             filePath: '', 
@@ -355,9 +360,10 @@ const ForgingSpecManager = () => {
             status: 'pending', 
             summary: '', 
             keywords: [], 
-            error: '' 
-        };
-        const [uploadQueue, setUploadQueue] = useState([initialItem]);
+            error: ''
+        });
+
+        const [uploadQueue, setUploadQueue] = useState([createInitialItem()]);
         const [isAnalyzing, setIsAnalyzing] = useState(false); 
         
         const analyzedCount = uploadQueue.filter(item => item.status === 'analyzed').length;
@@ -378,8 +384,7 @@ const ForgingSpecManager = () => {
                 }
                 
                 return {
-                    ...initialItem,
-                    id: crypto.randomUUID(), 
+                    ...createInitialItem(),
                     fileName: file.name,
                     filePath: filePath, 
                     fileType: fileType, 
@@ -393,7 +398,7 @@ const ForgingSpecManager = () => {
                     !existingFiles.some(existing => existing.filePath + existing.fileName === spec.filePath + spec.fileName)
                 );
                 // 새 항목을 추가하고, 빈 입력 항목 하나를 유지
-                return [...existingFiles, ...uniqueNewSpecs, initialItem].filter((item, index, self) => 
+                return [...existingFiles, ...uniqueNewSpecs, createInitialItem()].filter((item, index, self) => 
                     index === self.findIndex((t) => (t.id === item.id))
                 );
             });
@@ -483,7 +488,7 @@ const ForgingSpecManager = () => {
             }
             
             await handleSaveAnalyzedSpecs(specsToSave);
-            setUploadQueue([initialItem]); // 저장 후 목록 초기화
+            setUploadQueue([createInitialItem()]); // 저장 후 목록 초기화
         };
 
         return (
