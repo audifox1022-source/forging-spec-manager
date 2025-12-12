@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square, AlertCircle } from 'lucide-react';
 
 // --- Global Constants ---
@@ -8,7 +8,7 @@ const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-
 
 // --- IndexedDB Helper Functions (For Binary File Storage) ---
 const DB_NAME = 'ForgingSpecManagerDB';
-const DB_VERSION = 3; // FIX: 버전 업데이트 (스키마 충돌 방지)
+const DB_VERSION = 4; // FIX: 버전 업데이트 (스키마 갱신 및 초기화)
 const STORE_NAME = 'files';
 
 const openDB = () => {
@@ -32,15 +32,20 @@ const saveFileToDB = async (id, file) => {
     return new Promise((resolve, reject) => {
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
-        // 파일 객체가 유효한지 확인
-        if (!(file instanceof Blob)) {
-            console.error("Invalid file object:", file);
-            return resolve(); // 에러 없이 넘어가되 저장은 안 함
+        
+        // 파일 유효성 검사 강화
+        if (!file) {
+            console.warn(`[IndexedDB] No file provided for ID: ${id}`);
+            return resolve(); 
         }
+
         const request = store.put(file, id);
-        request.onsuccess = () => resolve();
+        request.onsuccess = () => {
+            console.log(`[IndexedDB] File saved: ${id}`);
+            resolve();
+        };
         request.onerror = (e) => {
-            console.error("IndexedDB Save Error:", e);
+            console.error(`[IndexedDB] Save Error for ${id}:`, e.target.error);
             reject(e.target.error);
         };
     });
@@ -120,7 +125,6 @@ const safeCreateId = () => Math.random().toString(36).substring(2, 9) + Date.now
 
 // --- Sub Components ---
 
-// FIX: 외부 함수로 분리하여 불필요한 재생성 방지
 const createInitialItem = () => ({
     id: safeCreateId(),
     file: null,
@@ -134,16 +138,32 @@ const createInitialItem = () => ({
     error: ''
 });
 
-// FIX: 검색바 컴포넌트 분리 및 최적화 (INP 개선 핵심)
-const SearchBar = React.memo(({ searchTerm, onSearchChange, sortOption, onSortChange }) => {
+// FIX: 검색바 최적화 (Debouncing 적용으로 INP 해결)
+const SearchBar = React.memo(({ onSearchChange, sortOption, onSortChange }) => {
+    const [localValue, setLocalValue] = useState("");
+
+    // 입력 시에는 로컬 상태만 업데이트 (즉각 반응)
+    const handleChange = (e) => {
+        setLocalValue(e.target.value);
+    };
+
+    // 300ms 후에 부모 컴포넌트(실제 검색)에 전달
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            onSearchChange(localValue);
+        }, 300);
+
+        return () => clearTimeout(handler);
+    }, [localValue, onSearchChange]);
+
     return (
         <div className="relative flex-grow flex gap-2">
              <div className="relative flex-grow">
                 <input 
                     type="text" 
                     placeholder="문서 제목, 키워드, 내용으로 검색..." 
-                    value={searchTerm} 
-                    onChange={e => onSearchChange(e.target.value)} 
+                    value={localValue} 
+                    onChange={handleChange} 
                     className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10 focus:outline-none focus:border-indigo-500 transition-colors" 
                 />
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
@@ -232,7 +252,6 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, o
 });
 SpecCard.displayName = 'SpecCard';
 
-// FIX: 목록 렌더링을 별도 컴포넌트로 분리하여 검색어 입력 시 렌더링 최적화
 const SpecList = React.memo(({ specs, selectedIds, onToggleSelect, onDelete, onDownload, onView }) => {
     if (specs.length === 0) {
         return (
@@ -547,7 +566,6 @@ const ForgingSpecManager = () => {
     const [userId] = useState("Local_User_ID"); 
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const deferredSearchTerm = useDeferredValue(searchTerm); 
     const [sortOption, setSortOption] = useState('date-desc');
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
@@ -680,9 +698,7 @@ const ForgingSpecManager = () => {
     }, []);
 
     const handleSelectAll = useCallback(() => {
-        // filteredSpecs를 사용할 수 없으므로 전체 specs 기준으로 동작
-        // 실제로는 filteredAndSortedSpecs를 props로 받거나 useMemo 안에서 처리해야 하나, 
-        // 간단한 구현을 위해 전체 선택으로 처리 (UX 개선 여지 있음)
+        // NOTE: 여기서는 전체 목록을 대상으로 함 (필터링된 목록을 하려면 props로 받아야 함)
         if (selectedIds.size === specs.length && specs.length > 0) {
             setSelectedIds(new Set());
         } else {
@@ -754,8 +770,8 @@ const ForgingSpecManager = () => {
     const filteredAndSortedSpecs = useMemo(() => {
         let result = specs;
         
-        if (deferredSearchTerm) {
-            const term = deferredSearchTerm.toLowerCase();
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
             result = result.filter(s => 
                 s.fileName.toLowerCase().includes(term) || 
                 s.summary?.toLowerCase().includes(term) ||
@@ -775,7 +791,7 @@ const ForgingSpecManager = () => {
                 default: return 0;
             }
         });
-    }, [specs, deferredSearchTerm, sortOption]);
+    }, [specs, searchTerm, sortOption]); // searchTerm은 SearchBar에서 debounce되므로 직접 사용
 
     if (!isMounted) return null;
 
@@ -803,7 +819,6 @@ const ForgingSpecManager = () => {
             )}
 
             <div className="flex flex-col xl:flex-row space-y-4 xl:space-y-0 xl:space-x-4 mb-8">
-                {/* FIX: SearchBar 컴포넌트 사용 */}
                 <div className="relative flex-grow flex gap-2">
                     <button 
                         onClick={handleSelectAll}
@@ -812,8 +827,8 @@ const ForgingSpecManager = () => {
                     >
                         {specs.length > 0 && selectedIds.size === specs.length ? <CheckSquare size={20} /> : <Square size={20} />}
                     </button>
+                    {/* FIX: SearchBar component handles its own debounce */}
                     <SearchBar 
-                        searchTerm={searchTerm} 
                         onSearchChange={setSearchTerm} 
                         sortOption={sortOption} 
                         onSortChange={setSortOption} 
@@ -834,7 +849,6 @@ const ForgingSpecManager = () => {
                 </div>
             </div>
 
-            {/* FIX: SpecList 컴포넌트 사용 */}
             <SpecList 
                 specs={filteredAndSortedSpecs} 
                 selectedIds={selectedIds}
