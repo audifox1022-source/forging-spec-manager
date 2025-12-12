@@ -5,7 +5,16 @@ import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, Aler
 // --- Global Constants ---
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
 const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=";
-const API_KEY = ""; // Gemini API Key는 환경 변수에서 읽어오거나 비워둡니다 (Canvas에서 자동 주입)
+
+// Gemini API Key를 환경 변수에서 가져오는 안전한 로직
+const getCurrentApiKey = () => {
+    if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+        return process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    }
+    // 하드코딩된 API_KEY가 빈 문자열이므로 사용하지 않음.
+    return ""; 
+};
+const CURRENT_API_KEY = getCurrentApiKey();
 
 // --- Helper Functions ---
 
@@ -70,11 +79,9 @@ const ForgingSpecManager = () => {
 
     // --- Gemini API Handler: Generate Summary & Keywords ---
     const generateSpecMetadata = useCallback(async (fileName, fileContent) => {
-        if (!API_KEY && !process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
-            throw new Error("Gemini API Key가 설정되지 않았습니다.");
+        if (!CURRENT_API_KEY) {
+            throw new Error("AI 분석을 위한 Gemini API Key가 설정되지 않았습니다. NEXT_PUBLIC_GEMINI_API_KEY를 확인해주세요.");
         }
-
-        const currentApiKey = API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
         const systemPrompt = `당신은 전문적인 '단조 시방서' 분석 전문가입니다. 사용자가 제공한 문서 내용을 바탕으로 핵심 요약(summary)과 주요 키워드(keywords)를 추출하여 JSON 형식으로 제공하십시오.
         핵심 요약은 50단어 이내로, 키워드는 5개 이내의 배열로 작성하십시오.`;
@@ -98,7 +105,7 @@ const ForgingSpecManager = () => {
         };
 
         try {
-            const response = await fetchWithRetry(`${API_URL}${currentApiKey}`, {
+            const response = await fetchWithRetry(`${API_URL}${CURRENT_API_KEY}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -191,7 +198,7 @@ const ForgingSpecManager = () => {
             return 'ETC';
         };
 
-        const isReadyForAnalysis = item.fileName && (API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY); 
+        const isReadyForAnalysis = item.fileName && (CURRENT_API_KEY); 
         const isAnalyzed = item.status === 'analyzed';
         const isError = item.status === 'error';
         const isCurrentAnalyzing = item.status === 'analyzing';
@@ -385,6 +392,7 @@ const ForgingSpecManager = () => {
                 const uniqueNewSpecs = newSpecs.filter(spec => 
                     !existingFiles.some(existing => existing.filePath + existing.fileName === spec.filePath + spec.fileName)
                 );
+                // 새 항목을 추가하고, 빈 입력 항목 하나를 유지
                 return [...existingFiles, ...uniqueNewSpecs, initialItem].filter((item, index, self) => 
                     index === self.findIndex((t) => (t.id === item.id))
                 );
@@ -419,7 +427,7 @@ const ForgingSpecManager = () => {
             setUploadQueue(prev => prev.map((q) => q.id === id ? { ...q, status: 'analyzing', error: '' } : q));
             
             try {
-                if (!API_KEY && !process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+                if (!CURRENT_API_KEY) {
                      throw new Error("AI 분석을 위한 Gemini API Key가 설정되지 않았습니다.");
                 }
 
