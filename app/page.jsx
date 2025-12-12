@@ -8,7 +8,7 @@ const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-
 
 // --- IndexedDB Helper Functions (For Binary File Storage) ---
 const DB_NAME = 'ForgingSpecManagerDB';
-const DB_VERSION = 2; // FIX: DB 버전 업데이트 (스키마 갱신 보장)
+const DB_VERSION = 2;
 const STORE_NAME = 'files';
 
 const openDB = () => {
@@ -111,6 +111,20 @@ const saveSpecsToLocalStorage = (specs) => {
 const safeCreateId = () => Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 
 // --- Sub Components ---
+
+// FIX: 컴포넌트 외부로 함수 이동 (안정성 확보)
+const createInitialItem = () => ({
+    id: safeCreateId(),
+    file: null,
+    fileName: '',
+    filePath: '',
+    fileType: '',
+    mockContent: '',
+    status: 'pending',
+    summary: '',
+    keywords: [],
+    error: ''
+});
 
 const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, onToggleSelect }) => (
     <div 
@@ -274,22 +288,10 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
     const fileInputRef = useRef(null);
     const folderInputRef = useRef(null);
 
-    const createInitialItem = useCallback(() => ({
-        id: safeCreateId(),
-        file: null, // 실제 파일 객체를 저장할 필드 추가
-        fileName: '',
-        filePath: '',
-        fileType: '',
-        mockContent: '',
-        status: 'pending',
-        summary: '',
-        keywords: [],
-        error: ''
-    }), []);
-
+    // FIX: createInitialItem을 외부 함수로 사용하여 상태 초기화 안정화
     const [uploadQueue, setUploadQueue] = useState([createInitialItem()]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [isSaving, setIsSaving] = useState(false); // 저장 중 상태 추가
+    const [isSaving, setIsSaving] = useState(false);
 
     const analyzedCount = uploadQueue.filter(item => item.fileName && item.status === 'analyzed').length;
 
@@ -324,7 +326,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             
             return {
                 id: safeCreateId(),
-                file: file, // 파일 객체 저장
+                file: file, 
                 fileName: file.name,
                 filePath: filePath, 
                 fileType: fileType, 
@@ -338,11 +340,12 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         
         setUploadQueue(prev => {
             const existingFiles = prev.filter(item => item.fileName);
+            // FIX: 외부 함수 사용
             return [...existingFiles, ...newSpecs, createInitialItem()];
         });
 
         event.target.value = ''; 
-    }, [createInitialItem]);
+    }, []); // 의존성 배열에서 createInitialItem 제거
 
     const handleRemoveItem = useCallback((id) => {
         setUploadQueue(prev => prev.filter((item) => item.id !== id));
@@ -395,7 +398,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             return;
         }
         setIsSaving(true);
-        await onSave(specsToSave); // 저장 완료 대기
+        await onSave(specsToSave);
         setIsSaving(false);
     };
 
@@ -663,7 +666,7 @@ const ForgingSpecManager = () => {
                         return uniqueSpecs;
                     });
                     
-                    alert("데이터 복원이 완료되었습니다. (주의: 원본 파일은 백업되지 않으므로 텍스트 요약만 복원됩니다.)");
+                    alert("데이터 복원이 완료되었습니다.");
                 } else {
                     alert("올바르지 않은 JSON 형식입니다.");
                 }
