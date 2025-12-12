@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'; // useRef 추가
 import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2 } from 'lucide-react';
 
 // --- Global Constants ---
@@ -313,7 +313,7 @@ const ForgingSpecManager = () => {
                 <p className="text-lg font-semibold text-gray-800 break-words">{spec.fileName}</p>
                 <div className="text-sm text-gray-500 mt-1 flex items-center flex-wrap">
                     <span className="font-medium mr-2 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600">{spec.fileType}</span>
-                    <span className='mr-2'>|</span>
+                    <span class='mr-2'>|</span>
                     {spec.keywords && spec.keywords.map((k, i) => (
                         <span key={i} className="text-xs mr-1 bg-gray-100 text-gray-600 rounded-md px-1.5 py-0.5 mt-1 sm:mt-0">{k}</span>
                     ))}
@@ -353,8 +353,11 @@ const ForgingSpecManager = () => {
     );
 
     const SpecUploadModal = () => {
+        // useRef를 사용하여 숨겨진 파일 입력 요소를 참조
+        const fileInputRef = useRef(null);
+        const folderInputRef = useRef(null);
+
         // Initial item generator function
-        // FIX: useCallback을 사용하여 메모리 안정성을 높임
         const createInitialItem = useCallback(() => ({
             id: safeCreateId(), 
             fileName: '', 
@@ -374,6 +377,7 @@ const ForgingSpecManager = () => {
         const analyzedCount = uploadQueue.filter(item => item.fileName && item.status === 'analyzed').length;
         const canSave = analyzedCount > 0;
 
+        // 파일 선택 후 처리 핸들러 (파일/폴더 입력의 onChange에서 호출)
         const handleFileSelect = (event) => {
             const files = Array.from(event.target.files);
             if (files.length === 0) return;
@@ -383,6 +387,7 @@ const ForgingSpecManager = () => {
                 const fileType = parts.length > 1 ? parts.pop().toUpperCase() : 'N/A';
                 
                 let filePath = '';
+                // 'webkitRelativePath'는 폴더 선택 시 경로를 제공합니다.
                 if (file.webkitRelativePath) {
                     const pathParts = file.webkitRelativePath.split('/');
                     filePath = pathParts.slice(0, -1).join('/'); 
@@ -408,11 +413,29 @@ const ForgingSpecManager = () => {
                     !existingFiles.some(existing => existing.filePath + existing.fileName === spec.filePath + spec.fileName)
                 );
                 // 새 항목을 추가하고, 빈 입력 항목 하나를 유지
-                return [...existingFiles, ...uniqueNewSpecs, createInitialItem()];
+                const updatedQueue = [...existingFiles, ...uniqueNewSpecs];
+                
+                // 마지막 항목이 빈 항목이 아니라면, 새 빈 항목 추가
+                if (updatedQueue.length === 0 || updatedQueue[updatedQueue.length - 1].fileName) {
+                    updatedQueue.push(createInitialItem());
+                }
+                
+                return updatedQueue;
             });
 
+            // 입력 값 초기화 (동일 파일을 다시 선택할 수 있도록)
             event.target.value = ''; 
         };
+        
+        // 버튼 클릭 시 숨겨진 input을 클릭하는 함수
+        const triggerFileInput = (isFolder) => {
+            if (isFolder && folderInputRef.current) {
+                folderInputRef.current.click();
+            } else if (!isFolder && fileInputRef.current) {
+                fileInputRef.current.click();
+            }
+        };
+
 
         const handleRemoveItem = (id) => {
             setUploadQueue(uploadQueue.filter((item) => item.id !== id));
@@ -496,7 +519,6 @@ const ForgingSpecManager = () => {
             }
             
             await handleSaveAnalyzedSpecs(specsToSave);
-            setModal({ isOpen: false, type: '', data: null }); // FIX: 저장 성공 시 모달 닫기
             setUploadQueue([createInitialItem()]); // 저장 후 목록 초기화
         };
 
@@ -507,30 +529,46 @@ const ForgingSpecManager = () => {
                     **파일 또는 폴더를 선택**하여 목록에 추가합니다. 각 항목에 **AI 분석용 핵심 정보**를 입력(선택 사항) 후 **'분석하기'**를 눌러 AI 요약과 키워드를 생성하고, **'저장하기'**를 통해 최종 등록하세요.
                 </p>
                 
-                {/* File Selection Input */}
-                <div className="mb-6">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">PC에서 시방서 파일 또는 폴더 선택</label>
-                    <label className="flex items-center justify-center w-full py-3 px-4 border-2 border-dashed border-indigo-300 rounded-lg shadow-sm text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition cursor-pointer">
+                {/* File Inputs (Hidden from view) */}
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    accept=".pdf, .xlsx, .xls, .zip, .rar, .7z"
+                />
+                <input
+                    ref={folderInputRef}
+                    type="file"
+                    webkitdirectory="true" // Enable folder selection
+                    directory=""            
+                    onChange={handleFileSelect}
+                    className="hidden"
+                />
+                
+                {/* File Selection Buttons */}
+                <div className="mb-6 space-y-2 border-b pb-4">
+                    <label 
+                        onClick={() => triggerFileInput(false)}
+                        className="flex items-center justify-center w-full py-3 px-4 border-2 border-dashed border-indigo-300 rounded-lg shadow-sm text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition cursor-pointer"
+                    >
                         <Upload size={20} className="mr-3" />
-                        <span className="font-semibold">파일 또는 폴더를 선택하여 목록에 추가</span>
-                        <input
-                            type="file"
-                            multiple
-                            webkitdirectory="true" // Enable folder selection
-                            directory=""            // Fallback attribute
-                            onChange={handleFileSelect}
-                            className="hidden"
-                            accept=".pdf, .xlsx, .xls, .zip, .rar, .7z"
-                        />
+                        <span className="font-semibold">개별 파일 선택</span>
                     </label>
-                    {/* Updated Guidance Text */}
-                    <p className="text-xs text-gray-500 mt-2">
-                        **💡 다중 폴더 등록 안내:** 폴더 선택 시 한 번에 하나의 폴더만 지정할 수 있습니다. 여러 폴더의 파일을 등록하려면 **폴더 선택을 반복**하거나, **여러 파일을 한 번에 선택**하십시오. 파일들은 목록에 누적됩니다.
-                    </p>
-                    {uploadQueue.length > 0 && (
+                    <label 
+                        onClick={() => triggerFileInput(true)}
+                        className="flex items-center justify-center w-full py-3 px-4 border-2 border-dashed border-indigo-300 rounded-lg shadow-sm text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition cursor-pointer"
+                    >
+                        <File size={20} className="mr-3" />
+                        <span className="font-semibold">폴더(디렉토리) 선택</span>
+                    </label>
+
+                    {uploadQueue.filter(item => item.fileName).length > 0 && (
                         <p className="text-sm text-gray-500 mt-2">총 {uploadQueue.filter(item => item.fileName).length}개의 파일이 목록에 준비되었습니다。</p>
                     )}
                 </div>
+
 
                 {/* NEW: Analyze All Button */}
                 {uploadQueue.filter(item => item.fileName).length > 0 && (
@@ -572,7 +610,7 @@ const ForgingSpecManager = () => {
                             <p className="font-medium">👆 상단 버튼을 눌러 시방서 파일 또는 폴더를 선택해주세요。</p>
                         </div>
                     ) : (
-                        uploadQueue.filter(item => item.fileName).map((item, index) => (
+                        uploadQueue.map((item, index) => (
                             <UploadItem
                                 key={item.id}
                                 index={index}
