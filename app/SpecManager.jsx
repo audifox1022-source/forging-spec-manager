@@ -50,7 +50,8 @@ const getConfig = () => {
         }
     }
     
-    // 최종적으로 하드코딩된 설정이나 환경변수에서 읽어온 설정 중 유효한 것을 사용합니다.
+    // FIX: 하드코딩된 설정을 환경 변수 값보다 강제적으로 우선 적용합니다.
+    // 이는 환경 변수 파싱 문제나 런타임 변수 누락 문제를 우회합니다.
     if (hardcodedFirebaseConfig.apiKey && hardcodedFirebaseConfig.projectId) {
         fbConfig = hardcodedFirebaseConfig;
     }
