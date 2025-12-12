@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, FileJson } from 'lucide-react';
+import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, FileJson, CheckSquare, Square } from 'lucide-react';
 
 // --- Global Constants ---
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
@@ -56,10 +56,21 @@ const safeCreateId = () => Math.random().toString(36).substring(2, 9) + Date.now
 
 // --- Sub Components (Memoized for Performance) ---
 
-// React.memo를 사용하여 props가 변경되지 않으면 리렌더링 방지
-const SpecCard = React.memo(({ spec, onDelete, onView }) => (
-    <div className="bg-white p-4 rounded-xl shadow-lg hover:shadow-xl transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border border-gray-100">
-        <div className="flex-grow">
+// React.memo를 사용하여 props가 변경되지 않으면 리렌더링 방지 (INP 최적화)
+const SpecCard = React.memo(({ spec, onDelete, onView, isSelected, onToggleSelect }) => (
+    <div 
+        className={`bg-white p-4 rounded-xl shadow-lg transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-100 hover:shadow-xl'}`}
+    >
+        {/* 체크박스 영역 */}
+        <button 
+            onClick={() => onToggleSelect(spec.id)} 
+            className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors"
+            aria-label={isSelected ? "선택 해제" : "선택"}
+        >
+            {isSelected ? <CheckSquare className="text-indigo-600" size={24} /> : <Square size={24} />}
+        </button>
+
+        <div className="flex-grow min-w-0">
             <div className="flex items-center gap-2 mb-1">
                 <span className={`text-xs font-bold px-2 py-1 rounded ${spec.fileType === 'PDF' ? 'bg-red-100 text-red-600' : spec.fileType === 'XLSX' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
                     {spec.fileType}
@@ -68,7 +79,7 @@ const SpecCard = React.memo(({ spec, onDelete, onView }) => (
                     {new Date(spec.createdAt).toLocaleDateString()}
                 </span>
             </div>
-            <p className="text-lg font-semibold text-gray-800 break-words">{spec.fileName}</p>
+            <p className="text-lg font-semibold text-gray-800 break-words truncate">{spec.fileName}</p>
             <div className="text-sm text-gray-500 mt-2 flex items-center flex-wrap gap-1">
                 {spec.keywords && spec.keywords.map((k, i) => (
                     <span key={i} className="text-xs bg-indigo-50 text-indigo-600 rounded-md px-2 py-1 border border-indigo-100">
@@ -78,7 +89,7 @@ const SpecCard = React.memo(({ spec, onDelete, onView }) => (
                 {(!spec.keywords || spec.keywords.length === 0) && <span className="text-xs italic">키워드 없음</span>}
             </div>
         </div>
-        <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto mt-2 sm:mt-0">
+        <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto mt-2 sm:mt-0 justify-end">
             <button
                 onClick={() => onView(spec)}
                 className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
@@ -276,7 +287,6 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         
         setUploadQueue(prev => {
             const existingFiles = prev.filter(item => item.fileName);
-            // 마지막에 항상 빈 입력 필드 하나 추가
             return [...existingFiles, ...newSpecs, createInitialItem()];
         });
 
@@ -403,10 +413,12 @@ const ForgingSpecManager = () => {
     const [userId] = useState("Local_User_ID"); 
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const [sortOption, setSortOption] = useState('date-desc'); // 정렬 상태 추가
+    const [sortOption, setSortOption] = useState('date-desc');
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
-    const importInputRef = useRef(null); // 파일 불러오기용 ref
+    // 다중 선택을 위한 상태 추가 (Set 사용)
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const importInputRef = useRef(null); 
 
     useEffect(() => {
         setIsMounted(true);
@@ -465,9 +477,57 @@ const ForgingSpecManager = () => {
             saveSpecsToLocalStorage(updated);
             return updated;
         });
+        // 삭제 시 선택 상태도 해제
+        setSelectedIds(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(id);
+            return newSet;
+        });
     }, []);
 
-    // --- 데이터 내보내기 (Export) ---
+    // 다중 선택 토글 핸들러
+    const handleToggleSelect = useCallback((id) => {
+        setSelectedIds(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(id)) newSet.delete(id);
+            else newSet.add(id);
+            return newSet;
+        });
+    }, []);
+
+    // 전체 선택/해제 핸들러
+    const handleSelectAll = useCallback(() => {
+        // 현재 필터링된 목록을 기준으로 전체 선택/해제
+        // (필터링된 것만 선택하는 것이 UX 상 자연스러움)
+        // filteredAndSortedSpecs를 직접 참조할 수 없으므로(렌더링 중에만 계산됨),
+        // 여기서는 전체 specs 기준으로 하거나, 렌더링 결과에서 계산된 값을 받아야 함.
+        // 하지만 간단하게 구현하기 위해 전체 specs 기준으로 동작하거나,
+        // useMemo로 계산된 filteredSpecs를 dependency로 받아야 함.
+        // 여기서는 useMemo 아래에 정의하거나, specs 전체를 대상으로 함.
+        
+        // specs 기준으로 전체 선택 동작 (필터와 무관하게 전체 선택)
+        // 만약 현재 선택된 개수가 전체 개수와 같으면 모두 해제, 아니면 모두 선택
+        if (selectedIds.size === specs.length && specs.length > 0) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(specs.map(s => s.id)));
+        }
+    }, [specs, selectedIds.size]);
+
+    // 선택된 항목 일괄 삭제 핸들러
+    const handleDeleteSelected = useCallback(() => {
+        if (selectedIds.size === 0) return;
+        
+        if (confirm(`선택한 ${selectedIds.size}개의 항목을 삭제하시겠습니까?`)) {
+            setSpecs(prevSpecs => {
+                const updated = prevSpecs.filter(s => !selectedIds.has(s.id));
+                saveSpecsToLocalStorage(updated);
+                return updated;
+            });
+            setSelectedIds(new Set()); // 선택 초기화
+        }
+    }, [selectedIds]);
+
     const handleExportData = () => {
         const dataStr = JSON.stringify(specs, null, 2);
         const blob = new Blob([dataStr], { type: "application/json" });
@@ -480,7 +540,6 @@ const ForgingSpecManager = () => {
         document.body.removeChild(link);
     };
 
-    // --- 데이터 가져오기 (Import) ---
     const handleImportData = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -490,11 +549,8 @@ const ForgingSpecManager = () => {
             try {
                 const importedData = JSON.parse(event.target.result);
                 if (Array.isArray(importedData)) {
-                    // 기존 데이터에 병합 (중복 ID 체크는 생략하거나 강화할 수 있음)
-                    // 여기서는 단순 병합 후 저장
                     setSpecs(prevSpecs => {
                          const mergedSpecs = [...importedData, ...prevSpecs];
-                        // 중복 제거 (ID 기준)
                         const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
                         saveSpecsToLocalStorage(uniqueSpecs);
                         return uniqueSpecs;
@@ -510,13 +566,12 @@ const ForgingSpecManager = () => {
             }
         };
         reader.readAsText(file);
-        e.target.value = ''; // 초기화
+        e.target.value = ''; 
     };
 
     const filteredAndSortedSpecs = useMemo(() => {
         let result = specs;
         
-        // 1. 검색 필터
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
             result = result.filter(s => 
@@ -526,16 +581,15 @@ const ForgingSpecManager = () => {
             );
         }
 
-        // 2. 정렬
         return [...result].sort((a, b) => {
             const dateA = new Date(a.createdAt).getTime();
             const dateB = new Date(b.createdAt).getTime();
 
             switch (sortOption) {
-                case 'date-desc': return dateB - dateA; // 최신순
-                case 'date-asc': return dateA - dateB;   // 과거순
-                case 'name-asc': return a.fileName.localeCompare(b.fileName); // 이름순
-                case 'type-asc': return a.fileType.localeCompare(b.fileType); // 파일 유형순
+                case 'date-desc': return dateB - dateA; 
+                case 'date-asc': return dateA - dateB;   
+                case 'name-asc': return a.fileName.localeCompare(b.fileName); 
+                case 'type-asc': return a.fileType.localeCompare(b.fileType); 
                 default: return 0;
             }
         });
@@ -566,16 +620,26 @@ const ForgingSpecManager = () => {
                 <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-6">{error}</div>
             )}
 
-            <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
+            {/* 컨트롤 바: 검색, 정렬, 등록, 다중삭제 */}
+            <div className="flex flex-col xl:flex-row space-y-4 xl:space-y-0 xl:space-x-4 mb-8">
                 <div className="relative flex-grow flex gap-2">
+                    {/* 전체 선택 체크박스 (간단 버전) */}
+                    <button 
+                        onClick={handleSelectAll}
+                        className={`flex items-center justify-center w-12 rounded-lg border-2 ${specs.length > 0 && selectedIds.size === specs.length ? 'border-indigo-500 bg-indigo-50 text-indigo-600' : 'border-gray-300 bg-white text-gray-400'}`}
+                        title={specs.length > 0 && selectedIds.size === specs.length ? "전체 해제" : "전체 선택"}
+                    >
+                        {specs.length > 0 && selectedIds.size === specs.length ? <CheckSquare size={20} /> : <Square size={20} />}
+                    </button>
+
                      <div className="relative flex-grow">
-                        <input type="text" placeholder="검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10" />
+                        <input type="text" placeholder="검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10 focus:outline-none focus:border-indigo-500" />
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
                      </div>
                      <select 
                         value={sortOption} 
                         onChange={(e) => setSortOption(e.target.value)}
-                        className="border-2 border-gray-300 rounded-lg p-3 bg-white text-gray-700 focus:outline-none focus:border-indigo-500"
+                        className="border-2 border-gray-300 rounded-lg p-3 bg-white text-gray-700 focus:outline-none focus:border-indigo-500 min-w-[120px]"
                      >
                         <option value="date-desc">최신순</option>
                         <option value="date-asc">과거순</option>
@@ -583,9 +647,19 @@ const ForgingSpecManager = () => {
                         <option value="type-asc">파일 유형순</option>
                      </select>
                 </div>
-                <button onClick={() => setModal({ isOpen: true, type: 'upload' })} className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 whitespace-nowrap">
-                    <Upload size={20} className="mr-2" /> 시방서 등록
-                </button>
+                <div className="flex gap-2">
+                    {selectedIds.size > 0 && (
+                        <button 
+                            onClick={handleDeleteSelected} 
+                            className="flex items-center justify-center py-3 px-6 rounded-lg bg-red-100 text-red-600 font-semibold hover:bg-red-200 whitespace-nowrap transition-colors"
+                        >
+                            <Trash2 size={20} className="mr-2" /> 선택 삭제 ({selectedIds.size})
+                        </button>
+                    )}
+                    <button onClick={() => setModal({ isOpen: true, type: 'upload' })} className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 whitespace-nowrap transition-colors">
+                        <Upload size={20} className="mr-2" /> 시방서 등록
+                    </button>
+                </div>
             </div>
 
             <div className="space-y-4">
@@ -593,7 +667,14 @@ const ForgingSpecManager = () => {
                     <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl"><FileText size={48} className="mx-auto" /><p>데이터가 없습니다.</p></div>
                 ) : (
                     filteredAndSortedSpecs.map(spec => (
-                        <SpecCard key={spec.id} spec={spec} onDelete={handleDelete} onView={(s) => setModal({ isOpen: true, type: 'preview', data: s })} />
+                        <SpecCard 
+                            key={spec.id} 
+                            spec={spec} 
+                            isSelected={selectedIds.has(spec.id)}
+                            onToggleSelect={handleToggleSelect}
+                            onDelete={handleDelete} 
+                            onView={(s) => setModal({ isOpen: true, type: 'preview', data: s })} 
+                        />
                     ))
                 )}
             </div>
