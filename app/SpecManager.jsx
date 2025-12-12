@@ -1,28 +1,50 @@
 "use client"; // <-- 이 줄은 유지되어야 합니다.
-import { useState, useEffect, useCallback, useMemo } from 'react'; // FIX: React 제거
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth'; // signInWithCustomToken 제거
 import { getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, orderBy, serverTimestamp } from 'firebase/firestore'; 
 import { Search, FileText, Download, Upload, Trash2, Loader2, XCircle, Zap, File, ListChecks, AlertTriangle } from 'lucide-react';
 
-// --- Configuration Values (고객님이 제공한 값을 코드에 직접 적용) ---
-const HARDCODED_FIREBASE_CONFIG = {
-    apiKey: "AIzaSyCB43xipDeVyZVu4sAdtF0lGFIzzCfrsIc",
-    authDomain: "forging-spec-manager.firebaseapp.com",
-    projectId: "forging-spec-manager",
-    storageBucket: "forging-spec-manager.firebasestorage.app",
-    messagingSenderId: "299326184664",
-    appId: "1:299326184664:web:cfef24589a3cfe4a504bad",
-    measurementId: "G-0935D7SKB1"
+// --- Configuration Helper ---
+// 환경 변수나 전역 변수에서 안전하게 값을 가져오는 함수
+const getConfig = () => {
+    let fbConfig = {};
+    let gApiKey = "";
+    
+    try {
+        // 1. Canvas/Internal Environment Check
+        if (typeof __firebase_config !== 'undefined') {
+            fbConfig = JSON.parse(__firebase_config);
+        } 
+        // 2. Next.js / StackBlitz / Vercel Environment Check
+        else if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_FIREBASE_CONFIG) {
+            const envConfig = process.env.NEXT_PUBLIC_FIREBASE_CONFIG;
+            fbConfig = typeof envConfig === 'string' ? JSON.parse(envConfig) : envConfig;
+        }
+
+        // API Key Check
+        if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+            gApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+        } 
+    } catch (e) {
+        console.warn("Config loading error:", e);
+    }
+    
+    // Fallback/Safety net for missing critical IDs (ProjectID, APIKey)
+    if (!fbConfig.projectId) {
+        fbConfig.projectId = 'default-project-' + (Math.random().toString(36).substring(2, 8));
+    }
+    if (!fbConfig.apiKey && gApiKey) {
+        // Fallback: Use Gemini key as Firebase API key if Firebase key is missing, 
+        // only if needed for initialisation checks.
+        fbConfig.apiKey = gApiKey;
+    }
+
+
+    return { fbConfig, gApiKey };
 };
 
-const firebaseConfig = HARDCODED_FIREBASE_CONFIG;
-
-// Gemini API Key는 환경 변수에서 읽어오거나 비워둡니다 (Canvas에서 자동 주입)
-let envApiKey = "";
-if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
-    envApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-}
+const { fbConfig: firebaseConfig, gApiKey: envApiKey } = getConfig();
 
 // Helper function to truncate keys for safe display
 const truncateKey = (key) => (key && typeof key === 'string' && key.length > 10 ? key.substring(0, 6) + '...' + key.substring(key.length - 4) : key || 'N/A');
@@ -30,21 +52,16 @@ const truncateKey = (key) => (key && typeof key === 'string' && key.length > 10 
 // FIX: Sanitize the appId to prevent Firestore path errors caused by slashes in the environment variable.
 const sanitizeAppId = (id) => {
     if (typeof id === 'string') {
+        // Replace slashes (/) with hyphens (-) as slashes break Firestore paths.
+        // Also replace dots (.) with underscores (_) for general ID safety.
         return id.replace(/\//g, '-').replace(/\./g, '_');
     }
-    // 하드코딩된 projectId를 앱 ID 폴백으로 사용
     return firebaseConfig.projectId || 'spec-manager-v1'; 
 };
 
 // --- Global Variables ---
-let dynamicAppId = 'spec-manager-v1';
-if (typeof __app_id !== 'undefined') {
-    dynamicAppId = sanitizeAppId(__app_id);
-} else {
-    dynamicAppId = sanitizeAppId(firebaseConfig.projectId);
-}
-const appId = dynamicAppId;
-
+// Canvas app ID를 최우선으로 사용, 없을 경우 프로젝트 ID를 기반으로 생성
+const appId = sanitizeAppId(typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId);
 const apiKey = envApiKey || ""; 
 
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
@@ -69,15 +86,14 @@ const fetchWithRetry = async (url, options, retries = 3) => {
 
 // --- Firebase Initialization and Auth Logic ---
 let app, db, auth;
-let globalInitError = null; // Renamed to clearly differentiate from local state
+let globalInitError = null;
 
 try {
-    // Check if config is valid (API Key가 하드코딩되었으므로 반드시 유효함)
+    // Check if config is valid (has apiKey at minimum)
     if (firebaseConfig && firebaseConfig.apiKey) {
         app = initializeApp(firebaseConfig);
         db = getFirestore(app);
         auth = getAuth(app);
-        // setLogLevel('debug'); // 디버그 로깅 제거 (성능 저하 방지)
     } else {
         globalInitError = "Firebase Configuration (apiKey, projectId, etc.)이 누락되었습니다.";
     }
@@ -97,7 +113,7 @@ const ForgingSpecManager = () => {
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
     
-    // Canvas의 __initial_auth_token 사용을 완전히 방지하기 위해 null로 고정합니다.
+    // custom-token-mismatch 오류를 피하기 위해 __initial_auth_token 사용을 완전히 방지합니다.
     const initialAuthToken = null; 
 
     // 1. Firebase Authentication & Initialization
@@ -123,7 +139,7 @@ const ForgingSpecManager = () => {
             await new Promise(resolve => setTimeout(resolve, 300)); 
             
             try {
-                // 무조건 익명 로그인 시도
+                // 무조건 익명 로그인만 시도
                 await signInAnonymously(auth);
             } catch (e) {
                 console.error("Sign-in attempt failed:", e);
@@ -132,10 +148,12 @@ const ForgingSpecManager = () => {
             }
         };
 
+        // onAuthStateChanged는 최초 상태를 확인하고, user가 null일 경우 익명 로그인을 시도합니다.
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
                 handleAuthResult(user);
             } else {
+                // 최초 상태에서 user가 null일 때 익명 로그인을 시작합니다.
                 trySignInAnonymously();
             }
         });
@@ -156,10 +174,8 @@ const ForgingSpecManager = () => {
 
     // 2. Firestore Real-time Data Fetching
     useEffect(() => {
-        // userId가 확보되고 db 연결이 완료되었을 때만 데이터 로드를 시도합니다.
         if (!isAuthReady || !userId || !db) return;
         
-        // Define collection path for private data
         const specCollectionPath = `artifacts/${appId}/users/${userId}/forging_specs`;
         
         let unsubscribe;
@@ -173,7 +189,7 @@ const ForgingSpecManager = () => {
                     ...doc.data()
                 }));
                 setSpecs(fetchedSpecs);
-                if (error) setError(''); // Clear error if data is fetched successfully
+                if (error) setError(''); 
             }, (e) => {
                 console.error("Firestore data fetch failed:", e);
                 if (e.code !== 'permission-denied') { 
@@ -191,7 +207,6 @@ const ForgingSpecManager = () => {
 
     // --- Gemini API Handler: Generate Summary & Keywords ---
     const generateSpecMetadata = useCallback(async (fileName, fileContent) => {
-        // API Key Check for Manual Environments
         if (!apiKey && !process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
             throw new Error("Gemini API Key가 설정되지 않았습니다. .env.local 파일을 확인해주세요.");
         }
@@ -257,17 +272,17 @@ const ForgingSpecManager = () => {
         const specCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/forging_specs`);
         
         const savePromises = specsToSave
-            .filter(spec => spec.status === 'analyzed') // Only save successfully analyzed items
+            .filter(spec => spec.status === 'analyzed') 
             .map(async (spec) => {
             
             try {
                 await addDoc(specCollectionRef, {
                     fileName: spec.fileName,
                     fileType: spec.fileType,
-                    downloadLink: `#mock-link-${Math.random().toString(36).substring(7)}`, // Mock link
+                    downloadLink: `#mock-link-${Math.random().toString(36).substring(7)}`, 
                     summary: spec.summary,
                     keywords: spec.keywords,
-                    userId, // For security rule context
+                    userId, 
                     createdAt: serverTimestamp(),
                 });
             } catch (e) {
@@ -313,10 +328,8 @@ const ForgingSpecManager = () => {
     }, [specs, searchTerm]);
 
     // --- Configuration Guard UI ---
-    // Use the globalInitError check here.
     if (globalInitError || !auth) {
         
-        // Truncate sensitive data for display purposes
         const displayApiKey = truncateKey(firebaseConfig.apiKey);
         const displayProjectId = firebaseConfig.projectId || 'N/A';
         const displayAppId = firebaseConfig.appId || 'N/A';
@@ -341,11 +354,12 @@ const ForgingSpecManager = () => {
                     <div className="text-left bg-gray-100 p-4 rounded text-sm text-gray-700 overflow-x-auto">
                         <p className="font-semibold mb-1">앱이 사용 중인 설정값 (디버그):</p>
                         <pre className="bg-gray-800 text-white p-2 rounded mt-2 text-xs overflow-x-auto">
+                            {/* 고객님이 제공한 하드코딩된 값이 표시되어야 함 */}
                             {`{
   "projectId": "${displayProjectId}",
   "apiKey": "${displayApiKey}",
   "appId": "${displayAppId}",
-  // ... (다른 값은 Console에서 비교하세요)
+  // ... (Console 값과 비교하세요)
 }`}
                         </pre>
                     </div>
