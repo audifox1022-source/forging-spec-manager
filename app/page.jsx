@@ -6,7 +6,7 @@ import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, Aler
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
 const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=";
 
-// --- IndexedDB Helper Functions (For Binary File Storage) ---
+// --- IndexedDB Helper Functions ---
 const DB_NAME = 'ForgingSpecManagerDB';
 const DB_VERSION = 5; 
 const STORE_NAME = 'files';
@@ -179,8 +179,27 @@ SearchBar.displayName = 'SearchBar';
 const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, onPreviewFile, isSelected, onToggleSelect }) => {
     const [isDownloading, setIsDownloading] = useState(false);
 
+    // INP 최적화를 위해 핸들러 실행을 비동기로 미룸
+    const handleViewClick = () => {
+        setTimeout(() => onView(spec), 0);
+    };
+
+    const handlePreviewClick = () => {
+        setTimeout(() => onPreviewFile(spec), 0);
+    };
+
+    const handleDeleteClick = () => {
+        setTimeout(() => onDelete(spec.id), 0);
+    };
+
+    const handleToggleClick = () => {
+        // 체크박스 토글은 매우 빈번하므로 바로 실행하되, 상위에서 최적화 필요
+        onToggleSelect(spec.id);
+    };
+
     const handleDownloadClick = async () => {
         setIsDownloading(true);
+        // 다운로드 로직은 비동기이므로 setTimeout 불필요 (이미 별도 스택에서 돔)
         await onDownload(spec);
         setIsDownloading(false);
     };
@@ -190,7 +209,7 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, onPreviewFile
             className={`bg-white p-4 rounded-xl shadow-lg transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-100 hover:shadow-xl'}`}
         >
             <button 
-                onClick={() => onToggleSelect(spec.id)} 
+                onClick={handleToggleClick} 
                 className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1"
                 aria-label={isSelected ? "선택 해제" : "선택"}
             >
@@ -217,16 +236,15 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, onPreviewFile
                 </div>
             </div>
             <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto mt-2 sm:mt-0 justify-end">
-                {/* NEW: 파일 미리보기 버튼 (눈 모양) */}
                 <button
-                    onClick={() => onPreviewFile(spec)}
+                    onClick={handlePreviewClick}
                     className="flex items-center justify-center p-2 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition shadow-md"
                     title="원본 파일 미리보기"
                 >
                     <Eye size={18} className="pointer-events-none" /> <span className="ml-1 text-sm sm:hidden">미리보기</span>
                 </button>
                 <button
-                    onClick={() => onView(spec)}
+                    onClick={handleViewClick}
                     className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
                     title="요약 정보 보기"
                 >
@@ -241,7 +259,7 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, onPreviewFile
                     {isDownloading ? <Loader2 size={18} className="animate-spin pointer-events-none" /> : <Download size={18} className="pointer-events-none" />}
                 </button>
                 <button
-                    onClick={() => onDelete(spec.id)}
+                    onClick={handleDeleteClick}
                     className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
                     title="삭제"
                 >
@@ -396,49 +414,51 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         const files = Array.from(event.target.files);
         if (files.length === 0) return;
 
-        const allowedExtensions = ['pdf', 'xlsx', 'xls'];
-        const validFiles = files.filter(file => {
-            const ext = file.name.split('.').pop().toLowerCase();
-            return allowedExtensions.includes(ext);
-        });
+        // INP 최적화: 파일 처리 로직을 비동기로 미룸
+        setTimeout(() => {
+            const allowedExtensions = ['pdf', 'xlsx', 'xls'];
+            const validFiles = files.filter(file => {
+                const ext = file.name.split('.').pop().toLowerCase();
+                return allowedExtensions.includes(ext);
+            });
 
-        if (validFiles.length === 0) {
-            alert("PDF 또는 엑셀 파일(.pdf, .xlsx, .xls)만 업로드할 수 있습니다.");
-            event.target.value = '';
-            return;
-        }
-
-        const newSpecs = validFiles.map(file => {
-            const parts = file.name.split('.');
-            const ext = parts.pop().toLowerCase();
-            let fileType = 'ETC';
-            if(ext === 'pdf') fileType = 'PDF';
-            else if(ext === 'xlsx' || ext === 'xls') fileType = 'XLSX';
-
-            let filePath = '';
-            if (file.webkitRelativePath) {
-                const pathParts = file.webkitRelativePath.split('/');
-                filePath = pathParts.slice(0, -1).join('/'); 
+            if (validFiles.length === 0) {
+                alert("PDF 또는 엑셀 파일(.pdf, .xlsx, .xls)만 업로드할 수 있습니다.");
+                return;
             }
+
+            const newSpecs = validFiles.map(file => {
+                const parts = file.name.split('.');
+                const ext = parts.pop().toLowerCase();
+                let fileType = 'ETC';
+                if(ext === 'pdf') fileType = 'PDF';
+                else if(ext === 'xlsx' || ext === 'xls') fileType = 'XLSX';
+
+                let filePath = '';
+                if (file.webkitRelativePath) {
+                    const pathParts = file.webkitRelativePath.split('/');
+                    filePath = pathParts.slice(0, -1).join('/'); 
+                }
+                
+                return {
+                    id: safeCreateId(),
+                    file: file, 
+                    fileName: file.name,
+                    filePath: filePath, 
+                    fileType: fileType, 
+                    mockContent: '', 
+                    status: 'pending', 
+                    summary: '', 
+                    keywords: [], 
+                    error: ''
+                };
+            });
             
-            return {
-                id: safeCreateId(),
-                file: file, 
-                fileName: file.name,
-                filePath: filePath, 
-                fileType: fileType, 
-                mockContent: '', 
-                status: 'pending', 
-                summary: '', 
-                keywords: [], 
-                error: ''
-            };
-        });
-        
-        setUploadQueue(prev => {
-            const existingFiles = prev.filter(item => item.fileName);
-            return [...existingFiles, ...newSpecs, createInitialItem()];
-        });
+            setUploadQueue(prev => {
+                const existingFiles = prev.filter(item => item.fileName);
+                return [...existingFiles, ...newSpecs, createInitialItem()];
+            });
+        }, 0);
 
         event.target.value = ''; 
     }, []);
@@ -658,6 +678,7 @@ const ForgingSpecManager = () => {
             const fileBlob = await getFileFromDB(spec.id);
             
             if (fileBlob) {
+                console.log(`[Download] 원본 파일 발견. 다운로드 시작: ${spec.fileName}`);
                 const url = URL.createObjectURL(fileBlob);
                 const link = document.createElement("a");
                 link.href = url;
@@ -711,6 +732,10 @@ const ForgingSpecManager = () => {
         }
     }, []);
 
+    // FIX: useCallback으로 분리 (SpecList 리렌더링 방지)
+    const handleView = useCallback((spec) => {
+        setModal({ isOpen: true, type: 'preview', data: spec });
+    }, []);
 
     const handleToggleSelect = useCallback((id) => {
         setSelectedIds(prev => {
@@ -736,8 +761,10 @@ const ForgingSpecManager = () => {
             isOpen: true,
             message: `선택한 ${selectedIds.size}개의 항목을 정말 삭제하시겠습니까? (원본 파일도 함께 삭제됩니다)`,
             onConfirm: () => {
+                // 1. 모달 닫기 (INP 개선)
                 setConfirmModal({ isOpen: false, message: '', onConfirm: null });
                 
+                // 2. 삭제 처리 지연 (INP 개선)
                 setTimeout(() => {
                     selectedIds.forEach(id => deleteFileFromDB(id));
 
@@ -766,7 +793,6 @@ const ForgingSpecManager = () => {
 
     const handleImportData = (e) => {
         const file = e.target.files[0];
-        e.target.value = '';
         if (!file) return;
 
         const reader = new FileReader();
@@ -774,15 +800,14 @@ const ForgingSpecManager = () => {
             try {
                 const importedData = JSON.parse(event.target.result);
                 if (Array.isArray(importedData)) {
-                    setTimeout(() => {
-                        setSpecs(prevSpecs => {
-                            const mergedSpecs = [...importedData, ...prevSpecs];
-                            const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
-                            saveSpecsToLocalStorage(uniqueSpecs);
-                            return uniqueSpecs;
-                        });
-                        alert("데이터 복원이 완료되었습니다.");
-                    }, 0);
+                    setSpecs(prevSpecs => {
+                        const mergedSpecs = [...importedData, ...prevSpecs];
+                        const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
+                        setTimeout(() => saveSpecsToLocalStorage(uniqueSpecs), 0);
+                        return uniqueSpecs;
+                    });
+                    
+                    alert("데이터 복원이 완료되었습니다.");
                 } else {
                     alert("올바르지 않은 JSON 형식입니다.");
                 }
@@ -792,6 +817,7 @@ const ForgingSpecManager = () => {
             }
         };
         reader.readAsText(file);
+        e.target.value = ''; 
     };
 
     const filteredAndSortedSpecs = useMemo(() => {
@@ -882,7 +908,7 @@ const ForgingSpecManager = () => {
                 onDelete={handleDelete}
                 onDownload={handleDownloadSpec}
                 onPreviewFile={handlePreviewFile}
-                onView={(s) => setModal({ isOpen: true, type: 'preview', data: s })}
+                onView={handleView}
             />
 
             {modal.isOpen && (
