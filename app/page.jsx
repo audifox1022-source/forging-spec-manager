@@ -5,47 +5,23 @@ import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth'; 
 import { getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, orderBy, serverTimestamp } from 'firebase/firestore'; 
 import { Search, FileText, Download, Upload, Trash2, Loader2, XCircle, Zap, File, ListChecks, AlertTriangle } from 'lucide-react';
 
-// --- Configuration Helper ---
-// 환경 변수나 전역 변수에서 안전하게 값을 가져오는 함수
-const getConfig = () => {
-    let fbConfig = {};
-    let gApiKey = "";
-    
-    // 1. 고객님이 직접 제공한 설정 값을 최우선으로 사용합니다. (하드코딩)
-    const hardcodedFirebaseConfig = {
-        apiKey: "AIzaSyCB43xipDeVyZVu4sAdtF0lGFIzzCfrsIc",
-        authDomain: "forging-spec-manager.firebaseapp.com",
-        projectId: "forging-spec-manager",
-        storageBucket: "forging-spec-manager.firebasestorage.app",
-        messagingSenderId: "299326184664",
-        appId: "1:299326184664:web:cfef24589a3cfe4a504bad",
-        measurementId: "G-0935D7SKB1"
-    };
-
-    // 2. 환경 변수에서 Gemini API Key와 Firebase Config를 로드합니다.
-    if (typeof process !== 'undefined') {
-        if (process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
-            gApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-        } 
-    }
-    
-    // Canvas 환경 변수 로직은 제거하고 하드코딩된 값만 사용합니다.
-    fbConfig = hardcodedFirebaseConfig;
-
-    // Fallback/Safety net for missing critical IDs (ProjectID, APIKey)
-    if (!fbConfig.projectId) {
-        fbConfig.projectId = 'default-project-' + (Math.random().toString(36).substring(2, 8));
-    }
-    // apiKey는 하드코딩되었지만, 혹시 모를 경우를 대비해 한 번 더 체크 (G-Key를 쓰지는 않음)
-    if (!fbConfig.apiKey && gApiKey) {
-        fbConfig.apiKey = gApiKey;
-    }
-
-
-    return { fbConfig, gApiKey };
+// --- Configuration Values (고객님이 제공한 값을 코드에 직접 적용) ---
+// 경고: 환경 변수가 아닌 코드에 직접 키를 넣는 방식입니다. 보안에 유의하세요.
+const firebaseConfig = {
+    apiKey: "AIzaSyCB43xipDeVyZVu4sAdtF0lGFIzzCfrsIc",
+    authDomain: "forging-spec-manager.firebaseapp.com",
+    projectId: "forging-spec-manager",
+    storageBucket: "forging-spec-manager.firebasestorage.app",
+    messagingSenderId: "299326184664",
+    appId: "1:299326184664:web:cfef24589a3cfe4a504bad",
+    measurementId: "G-0935D7SKB1"
 };
 
-const { fbConfig: firebaseConfig, gApiKey: envApiKey } = getConfig();
+// Gemini API Key는 환경 변수에서 읽어오거나 비워둡니다 (Canvas에서 자동 주입)
+let envApiKey = "";
+if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+    envApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+}
 
 // Helper function to truncate keys for safe display
 const truncateKey = (key) => (key && typeof key === 'string' && key.length > 10 ? key.substring(0, 6) + '...' + key.substring(key.length - 4) : key || 'N/A');
@@ -96,6 +72,7 @@ try {
         db = getFirestore(app);
         auth = getAuth(app);
     } else {
+        // 이 경고는 이제 하드코딩된 키 때문에 발생하지 않아야 합니다.
         globalInitError = "Firebase Configuration (apiKey, projectId, etc.)이 누락되었습니다.";
     }
 } catch (e) {
