@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
 import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square, AlertCircle } from 'lucide-react';
 
 // --- Global Constants ---
@@ -8,7 +8,7 @@ const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-
 
 // --- IndexedDB Helper Functions (For Binary File Storage) ---
 const DB_NAME = 'ForgingSpecManagerDB';
-const DB_VERSION = 5; // FIX: 버전 업데이트 (DB 초기화 및 스키마 갱신)
+const DB_VERSION = 5; 
 const STORE_NAME = 'files';
 
 const openDB = () => {
@@ -17,7 +17,6 @@ const openDB = () => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
-            // 스토어가 없으면 생성
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME);
             }
@@ -38,13 +37,12 @@ const saveFileToDB = async (id, file) => {
             const transaction = db.transaction([STORE_NAME], 'readwrite');
             const store = transaction.objectStore(STORE_NAME);
             
-            // 파일 객체 유효성 재확인
             if (!file) {
                 console.warn(`[IndexedDB] 파일이 없어 저장을 건너뜁니다. ID: ${id}`);
                 return resolve();
             }
 
-            const request = store.put(file, id); // Key: id, Value: File Object
+            const request = store.put(file, id); 
             request.onsuccess = () => {
                 console.log(`[IndexedDB] 파일 저장 성공! ID: ${id}, Name: ${file.name}, Size: ${file.size}`);
                 resolve();
@@ -166,7 +164,6 @@ const SearchBar = React.memo(({ onSearchChange, sortOption, onSortChange }) => {
         setLocalValue(e.target.value);
     };
 
-    // Debounce 적용 (500ms)
     useEffect(() => {
         const handler = setTimeout(() => {
             onSearchChange(localValue);
@@ -441,7 +438,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             
             return {
                 id: safeCreateId(),
-                file: file, // 중요: 파일 객체 저장
+                file: file, 
                 fileName: file.name,
                 filePath: filePath, 
                 fileType: fileType, 
@@ -735,15 +732,20 @@ const ForgingSpecManager = () => {
             isOpen: true,
             message: `선택한 ${selectedIds.size}개의 항목을 정말 삭제하시겠습니까? (원본 파일도 함께 삭제됩니다)`,
             onConfirm: () => {
-                selectedIds.forEach(id => deleteFileFromDB(id));
-
-                setSpecs(prevSpecs => {
-                    const updated = prevSpecs.filter(s => !selectedIds.has(s.id));
-                    setTimeout(() => saveSpecsToLocalStorage(updated), 0);
-                    return updated;
-                });
-                setSelectedIds(new Set());
+                // 1. 모달 닫기 (INP 개선)
                 setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+                
+                // 2. 삭제 처리 지연 (INP 개선)
+                setTimeout(() => {
+                    selectedIds.forEach(id => deleteFileFromDB(id));
+
+                    setSpecs(prevSpecs => {
+                        const updated = prevSpecs.filter(s => !selectedIds.has(s.id));
+                        setTimeout(() => saveSpecsToLocalStorage(updated), 0);
+                        return updated;
+                    });
+                    setSelectedIds(new Set());
+                }, 100);
             }
         });
     }, [selectedIds]);
@@ -792,7 +794,8 @@ const ForgingSpecManager = () => {
     const filteredAndSortedSpecs = useMemo(() => {
         let result = specs;
         
-        if (searchTerm) {
+        // 검색 필터 (지연된 검색어 사용)
+        if (searchTerm) { // NOTE: searchTerm은 SearchBar에서 이미 debounce되어 넘어옴
             const term = searchTerm.toLowerCase();
             result = result.filter(s => 
                 s.fileName.toLowerCase().includes(term) || 
@@ -841,6 +844,7 @@ const ForgingSpecManager = () => {
             )}
 
             <div className="flex flex-col xl:flex-row space-y-4 xl:space-y-0 xl:space-x-4 mb-8">
+                {/* FIX: SearchBar component handles its own debounce */}
                 <div className="relative flex-grow flex gap-2">
                     <button 
                         onClick={handleSelectAll}
