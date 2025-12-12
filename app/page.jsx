@@ -408,54 +408,60 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
     const analyzedCount = uploadQueue.filter(item => item.fileName && item.status === 'analyzed').length;
 
     const handleFileSelect = useCallback((event) => {
-        const files = Array.from(event.target.files);
-        if (files.length === 0) return;
+        // FIX: 이벤트 처리를 비동기로 미뤄 INP 개선
+        const files = event.target.files; // FileList 참조
+        if (!files || files.length === 0) return;
 
-        const allowedExtensions = ['pdf', 'xlsx', 'xls'];
-        const validFiles = files.filter(file => {
-            const ext = file.name.split('.').pop().toLowerCase();
-            return allowedExtensions.includes(ext);
-        });
+        // 즉시 입력값 초기화하여 브라우저 응답성 확보
+        event.target.value = '';
 
-        if (validFiles.length === 0) {
-            alert("PDF 또는 엑셀 파일(.pdf, .xlsx, .xls)만 업로드할 수 있습니다.");
-            event.target.value = '';
-            return;
-        }
-
-        const newSpecs = validFiles.map(file => {
-            const parts = file.name.split('.');
-            const ext = parts.pop().toLowerCase();
-            let fileType = 'ETC';
-            if(ext === 'pdf') fileType = 'PDF';
-            else if(ext === 'xlsx' || ext === 'xls') fileType = 'XLSX';
-
-            let filePath = '';
-            if (file.webkitRelativePath) {
-                const pathParts = file.webkitRelativePath.split('/');
-                filePath = pathParts.slice(0, -1).join('/'); 
-            }
+        // 무거운 처리를 지연 실행
+        setTimeout(() => {
+            const allowedExtensions = ['pdf', 'xlsx', 'xls'];
+            const fileArray = Array.from(files);
             
-            return {
-                id: safeCreateId(),
-                file: file, 
-                fileName: file.name,
-                filePath: filePath, 
-                fileType: fileType, 
-                mockContent: '', 
-                status: 'pending', 
-                summary: '', 
-                keywords: [], 
-                error: ''
-            };
-        });
-        
-        setUploadQueue(prev => {
-            const existingFiles = prev.filter(item => item.fileName);
-            return [...existingFiles, ...newSpecs, createInitialItem()];
-        });
+            const validFiles = fileArray.filter(file => {
+                const ext = file.name.split('.').pop().toLowerCase();
+                return allowedExtensions.includes(ext);
+            });
 
-        event.target.value = ''; 
+            if (validFiles.length === 0) {
+                alert("PDF 또는 엑셀 파일(.pdf, .xlsx, .xls)만 업로드할 수 있습니다.");
+                return;
+            }
+
+            const newSpecs = validFiles.map(file => {
+                const parts = file.name.split('.');
+                const ext = parts.pop().toLowerCase();
+                let fileType = 'ETC';
+                if(ext === 'pdf') fileType = 'PDF';
+                else if(ext === 'xlsx' || ext === 'xls') fileType = 'XLSX';
+
+                let filePath = '';
+                if (file.webkitRelativePath) {
+                    const pathParts = file.webkitRelativePath.split('/');
+                    filePath = pathParts.slice(0, -1).join('/'); 
+                }
+                
+                return {
+                    id: safeCreateId(),
+                    file: file, 
+                    fileName: file.name,
+                    filePath: filePath, 
+                    fileType: fileType, 
+                    mockContent: '', 
+                    status: 'pending', 
+                    summary: '', 
+                    keywords: [], 
+                    error: ''
+                };
+            });
+            
+            setUploadQueue(prev => {
+                const existingFiles = prev.filter(item => item.fileName);
+                return [...existingFiles, ...newSpecs, createInitialItem()];
+            });
+        }, 0);
     }, []);
 
     const handleRemoveItem = useCallback((id) => {
@@ -764,6 +770,9 @@ const ForgingSpecManager = () => {
 
     const handleImportData = (e) => {
         const file = e.target.files[0];
+        // FIX: 입력 초기화 (즉시)
+        e.target.value = '';
+
         if (!file) return;
 
         const reader = new FileReader();
@@ -771,14 +780,16 @@ const ForgingSpecManager = () => {
             try {
                 const importedData = JSON.parse(event.target.result);
                 if (Array.isArray(importedData)) {
-                    setSpecs(prevSpecs => {
-                        const mergedSpecs = [...importedData, ...prevSpecs];
-                        const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
-                        setTimeout(() => saveSpecsToLocalStorage(uniqueSpecs), 0);
-                        return uniqueSpecs;
-                    });
-                    
-                    alert("데이터 복원이 완료되었습니다.");
+                    // FIX: UI 차단 방지 (setTimeout)
+                    setTimeout(() => {
+                        setSpecs(prevSpecs => {
+                            const mergedSpecs = [...importedData, ...prevSpecs];
+                            const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
+                            saveSpecsToLocalStorage(uniqueSpecs);
+                            return uniqueSpecs;
+                        });
+                        alert("데이터 복원이 완료되었습니다.");
+                    }, 0);
                 } else {
                     alert("올바르지 않은 JSON 형식입니다.");
                 }
@@ -788,7 +799,6 @@ const ForgingSpecManager = () => {
             }
         };
         reader.readAsText(file);
-        e.target.value = ''; 
     };
 
     const filteredAndSortedSpecs = useMemo(() => {
