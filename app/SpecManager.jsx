@@ -66,6 +66,7 @@ const getConfig = () => {
         fbConfig.storageBucket = `${fbConfig.projectId}.appspot.com`;
     }
 
+
     return { fbConfig, gApiKey, isVercel };
 };
 
