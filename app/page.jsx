@@ -152,7 +152,7 @@ const ForgingSpecManager = () => {
             } else {
                 setUserId(null);
                 setIsAuthReady(false); // 유저 ID 미확보 시 미완료 상태로 설정
-                setError("인증 실패: Firebase Auth 설정을 확인하세요.");
+                setError("Firebase 연결 실패: 익명 인증 설정을 확인하세요."); // 오류 메시지 명확화
             }
             setLoading(false); // 모든 시도 후 로딩 종료
         };
@@ -727,7 +727,7 @@ const ForgingSpecManager = () => {
             
             // FIX: 저장 시점에도 userId 및 db 유효성을 재확인
             if (!userId || !db) {
-                setError("오류 발생! 인증 또는 데이터베이스 연결이 준비되지 않았습니다. 잠시 후 재시도하세요.");
+                setError("인증 또는 데이터베이스 연결이 준비되지 않았습니다. 잠시 후 재시도하세요.");
                 setModal({ isOpen: false, type: '', data: null }); // 모달 닫기
                 return;
             }
