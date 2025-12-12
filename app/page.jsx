@@ -59,7 +59,8 @@ const saveSpecsToLocalStorage = (specs) => {
 };
 
 // 안전한 고유 ID 생성 함수 (클라이언트 측 예외 방지)
-const safeCreateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
+// FIX: 가장 단순한 ID 생성 방식으로 변경 (client-side exception 방지)
+const safeCreateId = () => Math.random().toString(36).substring(2, 9); 
 
 
 const ForgingSpecManager = () => {
