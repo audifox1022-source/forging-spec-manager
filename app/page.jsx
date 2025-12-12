@@ -1,12 +1,12 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle } from 'lucide-react';
+import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, FileJson } from 'lucide-react';
 
 // --- Global Constants ---
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
 const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=";
 
-// Gemini API Key Logic
+// Gemini API Key를 환경 변수에서 가져오는 안전한 로직
 const getCurrentApiKey = () => {
     if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
         return process.env.NEXT_PUBLIC_GEMINI_API_KEY;
@@ -59,21 +59,29 @@ const safeCreateId = () => Math.random().toString(36).substring(2, 9) + Date.now
 const SpecCard = ({ spec, onDelete, onView }) => (
     <div className="bg-white p-4 rounded-xl shadow-lg hover:shadow-xl transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border border-gray-100">
         <div className="flex-grow">
+            <div className="flex items-center gap-2 mb-1">
+                <span className={`text-xs font-bold px-2 py-1 rounded ${spec.fileType === 'PDF' ? 'bg-red-100 text-red-600' : spec.fileType === 'XLSX' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
+                    {spec.fileType}
+                </span>
+                <span className="text-xs text-gray-400">
+                    {new Date(spec.createdAt).toLocaleDateString()}
+                </span>
+            </div>
             <p className="text-lg font-semibold text-gray-800 break-words">{spec.fileName}</p>
-            <div className="text-sm text-gray-500 mt-1 flex items-center flex-wrap">
-                <span className="font-medium mr-2 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600">{spec.fileType}</span>
-                <span className='mr-2'>|</span>
+            <div className="text-sm text-gray-500 mt-2 flex items-center flex-wrap gap-1">
                 {spec.keywords && spec.keywords.map((k, i) => (
-                    <span key={i} className="text-xs mr-1 bg-gray-100 text-gray-600 rounded-md px-1.5 py-0.5 mt-1 sm:mt-0">{k}</span>
+                    <span key={i} className="text-xs bg-indigo-50 text-indigo-600 rounded-md px-2 py-1 border border-indigo-100">
+                        #{k}
+                    </span>
                 ))}
                 {(!spec.keywords || spec.keywords.length === 0) && <span className="text-xs italic">키워드 없음</span>}
             </div>
         </div>
-        <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto">
+        <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto mt-2 sm:mt-0">
             <button
                 onClick={() => onView(spec)}
-                className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md w-1/3 sm:w-auto"
-                title="미리보기"
+                className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
+                title="상세보기"
             >
                 <FileText size={18} />
             </button>
@@ -85,14 +93,14 @@ const SpecCard = ({ spec, onDelete, onView }) => (
                     e.preventDefault();
                     alert("다운로드 기능: 실제 파일 경로가 있다면 다운로드가 시작됩니다.");
                 }}
-                className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md w-1/3 sm:w-auto"
-                title="다운로드"
+                className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md"
+                title="파일 다운로드"
             >
                 <Download size={18} />
             </a>
             <button
                 onClick={() => onDelete(spec.id)}
-                className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md w-1/3 sm:w-auto"
+                className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
                 title="삭제"
             >
                 <Trash2 size={18} />
@@ -107,7 +115,7 @@ const UploadItem = ({ item, onChange, onDelete, onAnalyze, isAnalyzing }) => {
         const ext = name.split('.').pop().toLowerCase();
         if (['pdf'].includes(ext)) return 'PDF';
         if (['xlsx', 'xls'].includes(ext)) return 'XLSX';
-        // ZIP 등 기타 확장자는 제거
+        if (['zip', 'rar', '7z'].includes(ext)) return 'ZIP';
         return 'ETC';
     };
 
@@ -238,14 +246,8 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             return;
         }
 
-        // 일부 파일만 유효할 경우 안내
-        if (validFiles.length < files.length) {
-             // alert(`총 ${files.length}개 중 ${validFiles.length}개의 파일만 허용된 형식(PDF, Excel)입니다.`); // 너무 자주 뜰 수 있어 주석 처리하거나 필요시 활성화
-        }
-
         const newSpecs = validFiles.map(file => {
             const parts = file.name.split('.');
-            // 확장자 대문자 변환
             const ext = parts.pop().toLowerCase();
             let fileType = 'ETC';
             if(ext === 'pdf') fileType = 'PDF';
@@ -344,12 +346,9 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             <h3 className="text-2xl font-bold text-gray-800 mb-4">시방서 등록 및 AI 분석</h3>
             <p className="text-sm text-gray-500 mb-4">PDF, Excel 파일만 지원합니다.</p>
             
-            {/* Hidden Inputs */}
-            {/* accept 속성으로 파일 선택 창에서 1차 필터링 */}
             <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" accept=".pdf, .xlsx, .xls" />
             <input ref={folderInputRef} type="file" {...{ webkitdirectory: "" }} onChange={handleFileSelect} className="hidden" />
 
-            {/* Buttons */}
             <div className="mb-6 space-y-2 border-b pb-4">
                 <button type="button" onClick={() => triggerFileInput(false)} className="w-full py-3 border-2 border-dashed border-indigo-300 rounded-lg text-indigo-700 flex justify-center items-center hover:bg-indigo-50">
                     <Upload size={20} className="mr-2" /> 개별 파일 선택
@@ -358,7 +357,6 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
                     <File size={20} className="mr-2" /> 폴더 선택 (PDF/Excel만 자동 선택)
                 </button>
                 
-                {/* Analyze All */}
                  {uploadQueue.filter(item => item.fileName).length > 0 && (
                     <button type="button" onClick={handleAnalyzeAll} disabled={isAnalyzing} className="w-full py-3 bg-purple-600 text-white rounded-lg flex justify-center items-center mt-2 hover:bg-purple-700 disabled:bg-gray-400">
                         <Zap size={18} className="mr-2" /> 일괄 분석하기
@@ -366,7 +364,6 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
                  )}
             </div>
 
-            {/* List */}
             <div className="space-y-4">
                  {uploadQueue.filter(item => item.fileName).map((item, index) => (
                     <UploadItem 
@@ -381,7 +378,6 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
                  ))}
             </div>
 
-            {/* Save Button */}
             <button
                 onClick={handleSubmit}
                 disabled={analyzedCount === 0 || isAnalyzing}
@@ -391,7 +387,6 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
                 분석 완료 항목 저장 ({analyzedCount}개)
             </button>
             
-            {/* Close Button */}
              <button onClick={onClose} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600">
                 <XCircle size={24} />
             </button>
@@ -401,17 +396,17 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
 
 // --- Main App Component ---
 const ForgingSpecManager = () => {
-    // FIX: 하이드레이션 오류 방지를 위한 마운트 체크
     const [isMounted, setIsMounted] = useState(false);
     const [userId] = useState("Local_User_ID"); 
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const [loading, setLoading] = useState(false);
+    const [sortOption, setSortOption] = useState('date-desc'); // 정렬 상태
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
+    const importInputRef = useRef(null); 
 
     useEffect(() => {
-        setIsMounted(true); // 클라이언트에서 마운트되었음을 표시
+        setIsMounted(true);
         const initialSpecs = loadSpecsFromLocalStorage();
         setSpecs(initialSpecs);
     }, []);
@@ -465,21 +460,94 @@ const ForgingSpecManager = () => {
         saveSpecsToLocalStorage(updated);
     };
 
-    const filteredSpecs = useMemo(() => {
-        if (!searchTerm) return specs;
-        const term = searchTerm.toLowerCase();
-        return specs.filter(s => s.fileName.toLowerCase().includes(term) || s.summary?.toLowerCase().includes(term));
-    }, [specs, searchTerm]);
+    // --- 데이터 내보내기 (Export) ---
+    const handleExportData = () => {
+        const dataStr = JSON.stringify(specs, null, 2);
+        const blob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `spec_backup_${new Date().toISOString().slice(0,10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
 
-    // 마운트 전에는 아무것도 렌더링하지 않음 (하이드레이션 에러 방지)
+    // --- 데이터 가져오기 (Import) ---
+    const handleImportData = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const importedData = JSON.parse(event.target.result);
+                if (Array.isArray(importedData)) {
+                    const mergedSpecs = [...importedData, ...specs];
+                    const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
+                    
+                    setSpecs(uniqueSpecs);
+                    saveSpecsToLocalStorage(uniqueSpecs);
+                    alert("데이터 복원이 완료되었습니다.");
+                } else {
+                    alert("올바르지 않은 JSON 형식입니다.");
+                }
+            } catch (err) {
+                console.error(err);
+                alert("파일을 읽는 중 오류가 발생했습니다.");
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = ''; 
+    };
+
+    const filteredAndSortedSpecs = useMemo(() => {
+        let result = specs;
+        
+        // 1. 검색 필터
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            result = result.filter(s => 
+                s.fileName.toLowerCase().includes(term) || 
+                s.summary?.toLowerCase().includes(term) ||
+                (s.keywords && s.keywords.some(k => k.toLowerCase().includes(term)))
+            );
+        }
+
+        // 2. 정렬 로직 업데이트
+        return [...result].sort((a, b) => {
+            const dateA = new Date(a.createdAt).getTime();
+            const dateB = new Date(b.createdAt).getTime();
+
+            switch (sortOption) {
+                case 'date-desc': return dateB - dateA; // 최신순
+                case 'date-asc': return dateA - dateB;   // 과거순
+                case 'name-asc': return a.fileName.localeCompare(b.fileName); // 이름순
+                case 'type-asc': return a.fileType.localeCompare(b.fileType); // 파일 유형순
+                default: return 0;
+            }
+        });
+    }, [specs, searchTerm, sortOption]);
+
     if (!isMounted) return null;
 
     return (
         <div className="min-h-screen bg-gray-50 p-4 sm:p-8 font-[Inter]">
-            <header className="mb-8">
-                <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900">단조 시방서 통합 관리 시스템</h1>
-                <p className="text-lg text-gray-600 mt-1">AI 요약 및 키워드 검색 (Local Storage)</p>
-                <div className="mt-2 text-xs text-green-600">사용자: {userId}</div>
+            <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                    <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900">단조 시방서 통합 관리 시스템</h1>
+                    <p className="text-lg text-gray-600 mt-1">AI 요약 및 키워드 검색 (Local Storage)</p>
+                    <div className="mt-2 text-xs text-green-600">사용자: {userId}</div>
+                </div>
+                <div className="flex gap-2">
+                    <button onClick={handleExportData} className="flex items-center px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition text-sm">
+                        <Save size={16} className="mr-1" /> 백업 저장
+                    </button>
+                    <button onClick={() => importInputRef.current.click()} className="flex items-center px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition text-sm">
+                        <RefreshCw size={16} className="mr-1" /> 백업 복원
+                    </button>
+                    <input type="file" ref={importInputRef} onChange={handleImportData} accept=".json" className="hidden" />
+                </div>
             </header>
             
             {error && (
@@ -487,11 +555,23 @@ const ForgingSpecManager = () => {
             )}
 
             <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
-                <div className="relative flex-grow">
-                     <input type="text" placeholder="검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10" />
-                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                <div className="relative flex-grow flex gap-2">
+                     <div className="relative flex-grow">
+                        <input type="text" placeholder="검색..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10" />
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                     </div>
+                     <select 
+                        value={sortOption} 
+                        onChange={(e) => setSortOption(e.target.value)}
+                        className="border-2 border-gray-300 rounded-lg p-3 bg-white text-gray-700 focus:outline-none focus:border-indigo-500"
+                     >
+                        <option value="date-desc">최신순</option>
+                        <option value="date-asc">과거순</option>
+                        <option value="name-asc">이름순</option>
+                        <option value="type-asc">파일 유형순</option>
+                     </select>
                 </div>
-                <button onClick={() => setModal({ isOpen: true, type: 'upload' })} className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700">
+                <button onClick={() => setModal({ isOpen: true, type: 'upload' })} className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 whitespace-nowrap">
                     <Upload size={20} className="mr-2" /> 시방서 등록
                 </button>
             </div>
@@ -500,7 +580,7 @@ const ForgingSpecManager = () => {
                 {specs.length === 0 ? (
                     <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl"><FileText size={48} className="mx-auto" /><p>데이터가 없습니다.</p></div>
                 ) : (
-                    filteredSpecs.map(spec => (
+                    filteredAndSortedSpecs.map(spec => (
                         <SpecCard key={spec.id} spec={spec} onDelete={handleDelete} onView={(s) => setModal({ isOpen: true, type: 'preview', data: s })} />
                     ))
                 )}
@@ -515,7 +595,10 @@ const ForgingSpecManager = () => {
                         {modal.type === 'preview' && modal.data && (
                             <div className="p-6">
                                 <h3 className="text-2xl font-bold mb-2">{modal.data.fileName}</h3>
-                                <p className="text-sm text-indigo-600 mb-4">{modal.data.fileType} 요약</p>
+                                <div className="flex items-center justify-between mb-4">
+                                    <p className="text-sm text-indigo-600">{modal.data.fileType} 요약</p>
+                                    <span className="text-xs text-gray-400">{new Date(modal.data.createdAt).toLocaleString()}</span>
+                                </div>
                                 <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 max-h-80 overflow-y-auto mb-4">
                                     <p className="whitespace-pre-wrap">{modal.data.summary}</p>
                                 </div>
