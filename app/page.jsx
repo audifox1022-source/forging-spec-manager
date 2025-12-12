@@ -58,6 +58,9 @@ const saveSpecsToLocalStorage = (specs) => {
     }
 };
 
+// 안전한 고유 ID 생성 함수 (클라이언트 측 예외 방지)
+const safeCreateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
+
 
 const ForgingSpecManager = () => {
     // Firebase 인증은 사용하지 않으므로 isAuthReady는 항상 true로 간주
@@ -351,8 +354,8 @@ const ForgingSpecManager = () => {
 
     const SpecUploadModal = () => {
         // Initial item generator function
-        const createInitialItem = () => ({
-            // FIX: crypto.randomUUID() 대신 안전한 방식으로 ID 생성
+        // FIX: useCallback을 사용하여 메모리 안정성을 높임
+        const createInitialItem = useCallback(() => ({
             id: Date.now().toString(36) + Math.random().toString(36).substring(2), 
             fileName: '', 
             filePath: '', 
@@ -362,7 +365,7 @@ const ForgingSpecManager = () => {
             summary: '', 
             keywords: [], 
             error: ''
-        });
+        }), []);
 
         const [uploadQueue, setUploadQueue] = useState([createInitialItem()]);
         const [isAnalyzing, setIsAnalyzing] = useState(false); 
