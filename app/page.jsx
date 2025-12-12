@@ -200,7 +200,7 @@ const ForgingSpecManager = () => {
         const getFileTypeFromExtension = (name) => {
             const ext = name.split('.').pop().toLowerCase();
             if (['pdf'].includes(ext)) return 'PDF';
-            if (['xlsx', 'xls'].includes(ext)) return 'XLSX'; // FIX: includes 메서드 닫기
+            if (['xlsx', 'xls'].includes(ext)) return 'XLSX'; 
             if (['zip', 'rar', '7z'].includes(ext)) return 'ZIP';
             return 'ETC';
         };
@@ -733,4 +733,20 @@ const ForgingSpecManager = () => {
             {modal.isOpen && modal.type === 'info' && (
                 <Modal>
                     <div className="p-6 text-center">
-                        <h3 className="text-xl font-bold
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">기능 안내</h3>
+                        <p className="text-gray-600">{modal.data}</p>
+                        <button
+                            onClick={() => setModal({ isOpen: false, type: '', data: null })}
+                            className="mt-6 py-2 px-4 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition"
+                        >
+                            확인
+                        </button>
+                    </div>
+                </Modal>
+            )}
+
+        </div>
+    );
+};
+
+export default ForgingSpecManager;
