@@ -1,12 +1,12 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
-import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square, AlertCircle, Eye } from 'lucide-react';
+import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square, AlertCircle, Eye, Grid, List } from 'lucide-react';
 
 // --- Global Constants ---
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
 const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=";
 
-// --- IndexedDB Helper Functions ---
+// --- IndexedDB Helper Functions (For Binary File Storage) ---
 const DB_NAME = 'ForgingSpecManagerDB';
 const DB_VERSION = 5; 
 const STORE_NAME = 'files';
@@ -176,91 +176,87 @@ const SearchBar = React.memo(({ onSearchChange, sortOption, onSortChange }) => {
 });
 SearchBar.displayName = 'SearchBar';
 
+// 카드형 디자인으로 변경된 SpecCard
 const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, onPreviewFile, isSelected, onToggleSelect }) => {
     const [isDownloading, setIsDownloading] = useState(false);
 
-    // INP 최적화를 위해 핸들러 실행을 비동기로 미룸
-    const handleViewClick = () => {
-        setTimeout(() => onView(spec), 0);
-    };
-
-    const handlePreviewClick = () => {
-        setTimeout(() => onPreviewFile(spec), 0);
-    };
-
-    const handleDeleteClick = () => {
-        setTimeout(() => onDelete(spec.id), 0);
-    };
-
-    const handleToggleClick = () => {
-        // 체크박스 토글은 매우 빈번하므로 바로 실행하되, 상위에서 최적화 필요
-        onToggleSelect(spec.id);
-    };
-
     const handleDownloadClick = async () => {
         setIsDownloading(true);
-        // 다운로드 로직은 비동기이므로 setTimeout 불필요 (이미 별도 스택에서 돔)
         await onDownload(spec);
         setIsDownloading(false);
     };
 
+    const handleViewClick = () => setTimeout(() => onView(spec), 0);
+    const handlePreviewClick = () => setTimeout(() => onPreviewFile(spec), 0);
+    const handleDeleteClick = () => setTimeout(() => onDelete(spec.id), 0);
+    const handleToggleClick = () => onToggleSelect(spec.id);
+
     return (
         <div 
-            className={`bg-white p-4 rounded-xl shadow-lg transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-100 hover:shadow-xl'}`}
+            className={`bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow duration-300 border flex flex-col h-full ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-200'}`}
         >
-            <button 
-                onClick={handleToggleClick} 
-                className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1"
-                aria-label={isSelected ? "선택 해제" : "선택"}
-            >
-                {isSelected ? <CheckSquare className="text-indigo-600 pointer-events-none" size={24} /> : <Square size={24} className="pointer-events-none" />}
-            </button>
-
-            <div className="flex-grow min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-xs font-bold px-2 py-1 rounded ${spec.fileType === 'PDF' ? 'bg-red-100 text-red-600' : spec.fileType === 'XLSX' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
-                        {spec.fileType}
-                    </span>
+            <div className="p-5 flex-grow">
+                <div className="flex justify-between items-start mb-3">
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={handleToggleClick} 
+                            className="text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1 -ml-1"
+                            aria-label={isSelected ? "선택 해제" : "선택"}
+                        >
+                            {isSelected ? <CheckSquare className="text-indigo-600 pointer-events-none" size={20} /> : <Square size={20} className="pointer-events-none" />}
+                        </button>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${spec.fileType === 'PDF' ? 'bg-red-50 text-red-600 border border-red-100' : spec.fileType === 'XLSX' ? 'bg-green-50 text-green-600 border border-green-100' : 'bg-gray-100 text-gray-600'}`}>
+                            {spec.fileType}
+                        </span>
+                    </div>
                     <span className="text-xs text-gray-400">
                         {new Date(spec.createdAt).toLocaleDateString()}
                     </span>
                 </div>
-                <p className="text-lg font-semibold text-gray-800 break-words truncate">{spec.fileName}</p>
-                <div className="text-sm text-gray-500 mt-2 flex items-center flex-wrap gap-1">
-                    {spec.keywords && spec.keywords.map((k, i) => (
-                        <span key={i} className="text-xs bg-indigo-50 text-indigo-600 rounded-md px-2 py-1 border border-indigo-100">
+
+                <h3 className="text-lg font-bold text-gray-800 mb-2 break-words line-clamp-2 leading-tight" title={spec.fileName}>
+                    {spec.fileName}
+                </h3>
+                
+                <div className="flex flex-wrap gap-1 mt-3">
+                    {spec.keywords && spec.keywords.slice(0, 3).map((k, i) => (
+                        <span key={i} className="text-xs bg-gray-50 text-gray-600 rounded px-2 py-1 border border-gray-100">
                             #{k}
                         </span>
                     ))}
-                    {(!spec.keywords || spec.keywords.length === 0) && <span className="text-xs italic">키워드 없음</span>}
+                    {spec.keywords && spec.keywords.length > 3 && (
+                        <span className="text-xs text-gray-400 py-1">+{spec.keywords.length - 3}</span>
+                    )}
+                    {(!spec.keywords || spec.keywords.length === 0) && <span className="text-xs italic text-gray-400">키워드 없음</span>}
                 </div>
             </div>
-            <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto mt-2 sm:mt-0 justify-end">
+
+            <div className="flex border-t border-gray-100 divide-x divide-gray-100">
                 <button
                     onClick={handlePreviewClick}
-                    className="flex items-center justify-center p-2 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition shadow-md"
-                    title="원본 파일 미리보기"
+                    className="flex-1 py-3 flex items-center justify-center text-gray-600 hover:bg-gray-50 hover:text-indigo-600 transition-colors"
+                    title="미리보기"
                 >
-                    <Eye size={18} className="pointer-events-none" /> <span className="ml-1 text-sm sm:hidden">미리보기</span>
+                    <Eye size={18} className="pointer-events-none" />
                 </button>
                 <button
                     onClick={handleViewClick}
-                    className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md"
-                    title="요약 정보 보기"
+                    className="flex-1 py-3 flex items-center justify-center text-gray-600 hover:bg-gray-50 hover:text-blue-600 transition-colors"
+                    title="요약 정보"
                 >
                     <FileText size={18} className="pointer-events-none" />
                 </button>
                 <button
                     onClick={handleDownloadClick}
                     disabled={isDownloading}
-                    className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md disabled:bg-green-300"
-                    title="원본 파일 다운로드"
+                    className="flex-1 py-3 flex items-center justify-center text-gray-600 hover:bg-gray-50 hover:text-green-600 transition-colors disabled:opacity-50"
+                    title="다운로드"
                 >
                     {isDownloading ? <Loader2 size={18} className="animate-spin pointer-events-none" /> : <Download size={18} className="pointer-events-none" />}
                 </button>
                 <button
                     onClick={handleDeleteClick}
-                    className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
+                    className="flex-1 py-3 flex items-center justify-center text-gray-600 hover:bg-red-50 hover:text-red-600 transition-colors"
                     title="삭제"
                 >
                     <Trash2 size={18} className="pointer-events-none" />
@@ -274,15 +270,17 @@ SpecCard.displayName = 'SpecCard';
 const SpecList = React.memo(({ specs, selectedIds, onToggleSelect, onDelete, onDownload, onView, onPreviewFile }) => {
     if (specs.length === 0) {
         return (
-            <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
-                <FileText size={48} className="mx-auto text-gray-300 pointer-events-none" />
-                <p>데이터가 없습니다.</p>
+            <div className="text-center py-20 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50">
+                <FileText size={48} className="mx-auto text-gray-300 pointer-events-none mb-4" />
+                <p className="text-lg font-medium">등록된 데이터가 없습니다.</p>
+                <p className="text-sm mt-2">새로운 시방서를 등록해보세요.</p>
             </div>
         );
     }
 
     return (
-        <div className="space-y-4">
+        // FIX: 반응형 그리드 레이아웃 적용
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {specs.map(spec => (
                 <SpecCard 
                     key={spec.id} 
@@ -678,7 +676,6 @@ const ForgingSpecManager = () => {
             const fileBlob = await getFileFromDB(spec.id);
             
             if (fileBlob) {
-                console.log(`[Download] 원본 파일 발견. 다운로드 시작: ${spec.fileName}`);
                 const url = URL.createObjectURL(fileBlob);
                 const link = document.createElement("a");
                 link.href = url;
@@ -732,7 +729,6 @@ const ForgingSpecManager = () => {
         }
     }, []);
 
-    // FIX: useCallback으로 분리 (SpecList 리렌더링 방지)
     const handleView = useCallback((spec) => {
         setModal({ isOpen: true, type: 'preview', data: spec });
     }, []);
@@ -761,10 +757,8 @@ const ForgingSpecManager = () => {
             isOpen: true,
             message: `선택한 ${selectedIds.size}개의 항목을 정말 삭제하시겠습니까? (원본 파일도 함께 삭제됩니다)`,
             onConfirm: () => {
-                // 1. 모달 닫기 (INP 개선)
                 setConfirmModal({ isOpen: false, message: '', onConfirm: null });
                 
-                // 2. 삭제 처리 지연 (INP 개선)
                 setTimeout(() => {
                     selectedIds.forEach(id => deleteFileFromDB(id));
 
@@ -793,6 +787,7 @@ const ForgingSpecManager = () => {
 
     const handleImportData = (e) => {
         const file = e.target.files[0];
+        e.target.value = '';
         if (!file) return;
 
         const reader = new FileReader();
@@ -800,14 +795,15 @@ const ForgingSpecManager = () => {
             try {
                 const importedData = JSON.parse(event.target.result);
                 if (Array.isArray(importedData)) {
-                    setSpecs(prevSpecs => {
-                        const mergedSpecs = [...importedData, ...prevSpecs];
-                        const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
-                        setTimeout(() => saveSpecsToLocalStorage(uniqueSpecs), 0);
-                        return uniqueSpecs;
-                    });
-                    
-                    alert("데이터 복원이 완료되었습니다.");
+                    setTimeout(() => {
+                        setSpecs(prevSpecs => {
+                            const mergedSpecs = [...importedData, ...prevSpecs];
+                            const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
+                            saveSpecsToLocalStorage(uniqueSpecs);
+                            return uniqueSpecs;
+                        });
+                        alert("데이터 복원이 완료되었습니다.");
+                    }, 0);
                 } else {
                     alert("올바르지 않은 JSON 형식입니다.");
                 }
@@ -817,7 +813,6 @@ const ForgingSpecManager = () => {
             }
         };
         reader.readAsText(file);
-        e.target.value = ''; 
     };
 
     const filteredAndSortedSpecs = useMemo(() => {
