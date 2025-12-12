@@ -98,6 +98,19 @@ const SpecCard = React.memo(({ spec, onDelete, onView, isSelected, onToggleSelec
             >
                 <FileText size={18} /> <span className="ml-1 text-sm sm:hidden">상세보기</span>
             </button>
+            <a
+                href={spec.downloadLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                    e.preventDefault();
+                    alert("다운로드 기능: 실제 파일 경로가 있다면 다운로드가 시작됩니다.");
+                }}
+                className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md"
+                title="파일 다운로드"
+            >
+                <Download size={18} /> <span className="ml-1 text-sm sm:hidden">다운로드</span>
+            </a>
             <button
                 onClick={() => onDelete(spec.id)}
                 className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
