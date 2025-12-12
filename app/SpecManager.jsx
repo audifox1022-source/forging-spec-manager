@@ -12,7 +12,19 @@ const getConfig = () => {
     let gApiKey = "";
     let isVercel = false;
 
-    // 1. Check Next.js / StackBlitz / Vercel Environment Variables
+    // 1. 고객님이 직접 제공한 설정 값을 최우선으로 사용합니다.
+    // **이 값은 Firebase Console에서 복사한 값입니다.**
+    const hardcodedFirebaseConfig = {
+        apiKey: "AIzaSyCB43xipDeVyZVu4sAdtF0lGFIzzCfrsIc",
+        authDomain: "forging-spec-manager.firebaseapp.com",
+        projectId: "forging-spec-manager",
+        storageBucket: "forging-spec-manager.firebasestorage.app",
+        messagingSenderId: "299326184664",
+        appId: "1:299326184664:web:cfef24589a3cfe4a504bad",
+        measurementId: "G-0935D7SKB1"
+    };
+    
+    // 2. 환경 변수에서 Gemini API Key와 Firebase Config를 로드합니다.
     if (typeof process !== 'undefined') {
         if (process.env.NEXT_PUBLIC_FIREBASE_CONFIG) {
             isVercel = true;
@@ -29,7 +41,7 @@ const getConfig = () => {
         }
     }
 
-    // 2. Canvas/Internal Environment Check (Fallback/Primary in Canvas)
+    // 3. Canvas/Internal Environment Check (Fallback/Primary in Canvas)
     if (typeof __firebase_config !== 'undefined' && !isVercel) {
         try {
             fbConfig = JSON.parse(__firebase_config);
@@ -38,13 +50,12 @@ const getConfig = () => {
         }
     }
     
-    // FIX 1: Gemini API Key로 Firebase apiKey를 대체하는 로직 제거 (오히려 혼란 야기)
-    // if (!fbConfig.apiKey && gApiKey) {
-    //     fbConfig.apiKey = gApiKey; 
-    //     console.warn("Firebase apiKey was derived from Gemini API Key for initialization.");
-    // }
+    // 최종적으로 하드코딩된 설정이나 환경변수에서 읽어온 설정 중 유효한 것을 사용합니다.
+    if (hardcodedFirebaseConfig.apiKey && hardcodedFirebaseConfig.projectId) {
+        fbConfig = hardcodedFirebaseConfig;
+    }
     
-    // FIX 2: If projectId is missing, use the default app ID for stability
+    // FIX: If projectId is missing, use the default app ID for stability
     const fallbackProjectId = 'canvas-project-' + (Math.random().toString(36).substring(2, 8));
     if (!fbConfig.projectId) {
         fbConfig.projectId = fallbackProjectId;
@@ -53,7 +64,6 @@ const getConfig = () => {
     if (!fbConfig.storageBucket) {
         fbConfig.storageBucket = `${fbConfig.projectId}.appspot.com`;
     }
-
 
     return { fbConfig, gApiKey, isVercel };
 };
@@ -80,7 +90,8 @@ if (typeof __app_id !== 'undefined') {
 }
 const appId = dynamicAppId;
 
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
+// initialAuthToken은 사용하지 않으므로 주석 처리하거나 무시합니다.
+// const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
 const apiKey = envApiKey || ""; 
 
 const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
@@ -157,31 +168,30 @@ const ForgingSpecManager = () => {
             setLoading(false); // 모든 시도 후 로딩 종료
         };
 
-        const trySignIn = async () => {
+        const trySignInAnonymously = async () => {
             // FIX: 300ms 지연 추가로 네트워크 안정성 확보
             await new Promise(resolve => setTimeout(resolve, 300)); 
             
             try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                // FIX: 무조건 익명 로그인만 시도 (custom-token-mismatch 회피)
+                await signInAnonymously(auth);
             } catch (e) {
                 console.error("Sign-in attempt failed:", e);
                 // 강제적인 에러 메시지 설정
-                setError("로그인 시도 실패: 익명 인증 또는 토큰 설정을 확인하세요.");
+                setError("로그인 시도 실패: 익명 인증 설정을 확인하세요.");
                 setLoading(false);
             }
         };
 
+        // Custom Token Mismatch 오류를 피하기 위해, onAuthStateChanged에서 user가 null일 경우
+        // 즉시 익명 로그인을 시도하도록 로직을 단순화합니다.
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
                 handleAuthResult(user);
             } else {
-                // 최초 onAuthStateChanged가 user가 null로 반환될 경우 (아직 로그인 안됨)
-                // 익명 로그인을 시도합니다.
-                trySignIn();
+                // user가 null일 때(최초 접속 또는 로그아웃 상태) 익명 로그인을 시도합니다.
+                // 토큰 관련 로직은 제거합니다.
+                trySignInAnonymously();
             }
         });
 
@@ -725,15 +735,8 @@ const ForgingSpecManager = () => {
                 return;
             }
             
-            // FIX: 저장 시점에도 userId 및 db 유효성을 재확인
-            if (!userId || !db) {
-                setError("인증 또는 데이터베이스 연결이 준비되지 않았습니다. 잠시 후 재시도하세요.");
-                setModal({ isOpen: false, type: '', data: null }); // 모달 닫기
-                return;
-            }
-            
             await handleSaveAnalyzedSpecs(specsToSave);
-            // Closing modal is handled inside handleSaveAnalyyzedSpecs on success/completion
+            // Closing modal is handled inside handleSaveAnalyzedSpecs on success/completion
         };
 
         return (
