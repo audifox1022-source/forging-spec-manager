@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, FileJson } from 'lucide-react';
 
 // --- Global Constants ---
@@ -54,9 +54,10 @@ const saveSpecsToLocalStorage = (specs) => {
 
 const safeCreateId = () => Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 
-// --- Sub Components ---
+// --- Sub Components (Memoized for Performance) ---
 
-const SpecCard = ({ spec, onDelete, onView }) => (
+// React.memo를 사용하여 props가 변경되지 않으면 리렌더링 방지
+const SpecCard = React.memo(({ spec, onDelete, onView }) => (
     <div className="bg-white p-4 rounded-xl shadow-lg hover:shadow-xl transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border border-gray-100">
         <div className="flex-grow">
             <div className="flex items-center gap-2 mb-1">
@@ -107,9 +108,10 @@ const SpecCard = ({ spec, onDelete, onView }) => (
             </button>
         </div>
     </div>
-);
+));
+SpecCard.displayName = 'SpecCard';
 
-const UploadItem = ({ item, onChange, onDelete, onAnalyze, isAnalyzing }) => {
+const UploadItem = React.memo(({ item, onChange, onDelete, onAnalyze, isAnalyzing }) => {
     const getFileTypeFromExtension = (name) => {
         if (!name) return 'N/A';
         const ext = name.split('.').pop().toLowerCase();
@@ -206,13 +208,14 @@ const UploadItem = ({ item, onChange, onDelete, onAnalyze, isAnalyzing }) => {
             </div>
         </div>
     );
-};
+});
+UploadItem.displayName = 'UploadItem';
 
 const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
     const fileInputRef = useRef(null);
     const folderInputRef = useRef(null);
 
-    const createInitialItem = () => ({
+    const createInitialItem = useCallback(() => ({
         id: safeCreateId(),
         fileName: '',
         filePath: '',
@@ -222,18 +225,17 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         summary: '',
         keywords: [],
         error: ''
-    });
+    }), []);
 
     const [uploadQueue, setUploadQueue] = useState([createInitialItem()]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
 
     const analyzedCount = uploadQueue.filter(item => item.fileName && item.status === 'analyzed').length;
 
-    const handleFileSelect = (event) => {
+    const handleFileSelect = useCallback((event) => {
         const files = Array.from(event.target.files);
         if (files.length === 0) return;
 
-        // 허용된 확장자 필터링 (PDF, Excel)
         const allowedExtensions = ['pdf', 'xlsx', 'xls'];
         const validFiles = files.filter(file => {
             const ext = file.name.split('.').pop().toLowerCase();
@@ -274,17 +276,18 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         
         setUploadQueue(prev => {
             const existingFiles = prev.filter(item => item.fileName);
+            // 마지막에 항상 빈 입력 필드 하나 추가
             return [...existingFiles, ...newSpecs, createInitialItem()];
         });
 
         event.target.value = ''; 
-    };
+    }, [createInitialItem]);
 
-    const handleRemoveItem = (id) => {
+    const handleRemoveItem = useCallback((id) => {
         setUploadQueue(prev => prev.filter((item) => item.id !== id));
-    };
+    }, []);
 
-    const handleInputChange = (id, field, value) => {
+    const handleInputChange = useCallback((id, field, value) => {
         setUploadQueue(prev => prev.map((item) => {
             if (item.id === id) {
                 return { 
@@ -295,9 +298,9 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             }
             return item;
         }));
-    };
+    }, []);
 
-    const handleAnalyzeItem = async (id, item) => {
+    const handleAnalyzeItem = useCallback(async (id, item) => {
         setIsAnalyzing(true);
         setUploadQueue(prev => prev.map(q => q.id === id ? { ...q, status: 'analyzing', error: '' } : q));
         
@@ -309,7 +312,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         } finally {
             setIsAnalyzing(false);
         }
-    };
+    }, [analyzeFunction]);
 
     const handleAnalyzeAll = async () => {
         const itemsToAnalyze = uploadQueue.filter(item => item.fileName && (item.status === 'pending' || item.status === 'error'));
@@ -400,10 +403,10 @@ const ForgingSpecManager = () => {
     const [userId] = useState("Local_User_ID"); 
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    const [sortOption, setSortOption] = useState('date-desc'); // 정렬 상태
+    const [sortOption, setSortOption] = useState('date-desc'); // 정렬 상태 추가
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
-    const importInputRef = useRef(null); 
+    const importInputRef = useRef(null); // 파일 불러오기용 ref
 
     useEffect(() => {
         setIsMounted(true);
@@ -411,7 +414,7 @@ const ForgingSpecManager = () => {
         setSpecs(initialSpecs);
     }, []);
 
-    const generateSpecMetadata = async (item) => {
+    const generateSpecMetadata = useCallback(async (item) => {
          if (!CURRENT_API_KEY) throw new Error("API Key Missing");
          
          const content = item.mockContent || `파일명: ${item.fileName}, 경로: ${item.filePath}, 타입: ${item.fileType}`;
@@ -435,9 +438,9 @@ const ForgingSpecManager = () => {
          } catch(e) {
              throw new Error("AI 분석 실패: " + e.message);
          }
-    };
+    }, []);
 
-    const handleSave = (newSpecs) => {
+    const handleSave = useCallback((newSpecs) => {
         const savedData = newSpecs.map(spec => ({
              id: spec.id,
              fileName: spec.fileName,
@@ -448,17 +451,21 @@ const ForgingSpecManager = () => {
              createdAt: new Date().toISOString()
         }));
         
-        const updatedSpecs = [...savedData, ...specs];
-        setSpecs(updatedSpecs);
-        saveSpecsToLocalStorage(updatedSpecs);
+        setSpecs(prevSpecs => {
+            const updatedSpecs = [...savedData, ...prevSpecs];
+            saveSpecsToLocalStorage(updatedSpecs);
+            return updatedSpecs;
+        });
         setModal({ isOpen: false });
-    };
+    }, []);
 
-    const handleDelete = (id) => {
-        const updated = specs.filter(s => s.id !== id);
-        setSpecs(updated);
-        saveSpecsToLocalStorage(updated);
-    };
+    const handleDelete = useCallback((id) => {
+        setSpecs(prevSpecs => {
+            const updated = prevSpecs.filter(s => s.id !== id);
+            saveSpecsToLocalStorage(updated);
+            return updated;
+        });
+    }, []);
 
     // --- 데이터 내보내기 (Export) ---
     const handleExportData = () => {
@@ -483,11 +490,16 @@ const ForgingSpecManager = () => {
             try {
                 const importedData = JSON.parse(event.target.result);
                 if (Array.isArray(importedData)) {
-                    const mergedSpecs = [...importedData, ...specs];
-                    const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
+                    // 기존 데이터에 병합 (중복 ID 체크는 생략하거나 강화할 수 있음)
+                    // 여기서는 단순 병합 후 저장
+                    setSpecs(prevSpecs => {
+                         const mergedSpecs = [...importedData, ...prevSpecs];
+                        // 중복 제거 (ID 기준)
+                        const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
+                        saveSpecsToLocalStorage(uniqueSpecs);
+                        return uniqueSpecs;
+                    });
                     
-                    setSpecs(uniqueSpecs);
-                    saveSpecsToLocalStorage(uniqueSpecs);
                     alert("데이터 복원이 완료되었습니다.");
                 } else {
                     alert("올바르지 않은 JSON 형식입니다.");
@@ -498,7 +510,7 @@ const ForgingSpecManager = () => {
             }
         };
         reader.readAsText(file);
-        e.target.value = ''; 
+        e.target.value = ''; // 초기화
     };
 
     const filteredAndSortedSpecs = useMemo(() => {
@@ -514,7 +526,7 @@ const ForgingSpecManager = () => {
             );
         }
 
-        // 2. 정렬 로직 업데이트
+        // 2. 정렬
         return [...result].sort((a, b) => {
             const dateA = new Date(a.createdAt).getTime();
             const dateB = new Date(b.createdAt).getTime();
