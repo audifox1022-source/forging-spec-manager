@@ -1,6 +1,6 @@
 "use client";
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Search, FileText, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from 'react';
+import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2, XCircle, Save, RefreshCw, CheckSquare, Square, AlertCircle } from 'lucide-react';
 
 // --- Global Constants ---
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
@@ -46,6 +46,7 @@ const loadSpecsFromLocalStorage = () => {
     return [];
 };
 
+// 성능 최적화를 위해 저장을 비동기로 처리할 수 있도록 설계 (호출부에서 setTimeout 사용)
 const saveSpecsToLocalStorage = (specs) => {
     if (typeof window !== 'undefined') {
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(specs));
@@ -56,7 +57,7 @@ const safeCreateId = () => Math.random().toString(36).substring(2, 9) + Date.now
 
 // --- Sub Components (Memoized for Performance) ---
 
-// React.memo를 사용하여 props가 변경되지 않으면 리렌더링 방지 (INP 최적화)
+// React.memo를 사용하여 props가 변경되지 않으면 리렌더링 방지
 const SpecCard = React.memo(({ spec, onDelete, onView, isSelected, onToggleSelect }) => (
     <div 
         className={`bg-white p-4 rounded-xl shadow-lg transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-100 hover:shadow-xl'}`}
@@ -64,7 +65,7 @@ const SpecCard = React.memo(({ spec, onDelete, onView, isSelected, onToggleSelec
         {/* 체크박스 영역 */}
         <button 
             onClick={() => onToggleSelect(spec.id)} 
-            className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors"
+            className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1"
             aria-label={isSelected ? "선택 해제" : "선택"}
         >
             {isSelected ? <CheckSquare className="text-indigo-600" size={24} /> : <Square size={24} />}
@@ -97,7 +98,6 @@ const SpecCard = React.memo(({ spec, onDelete, onView, isSelected, onToggleSelec
             >
                 <FileText size={18} /> <span className="ml-1 text-sm sm:hidden">상세보기</span>
             </button>
-            {/* 다운로드 버튼 제거됨: 로컬 저장소 모드에서는 파일 자체를 저장하지 않음 */}
             <button
                 onClick={() => onDelete(spec.id)}
                 className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
@@ -404,11 +404,16 @@ const ForgingSpecManager = () => {
     const [userId] = useState("Local_User_ID"); 
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
+    // 검색어 입력을 지연시켜 렌더링 성능 최적화 (INP 개선)
+    const deferredSearchTerm = useDeferredValue(searchTerm); 
     const [sortOption, setSortOption] = useState('date-desc');
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
-    // 다중 선택을 위한 상태 추가 (Set 사용)
+    // 다중 선택 상태
     const [selectedIds, setSelectedIds] = useState(new Set());
+    // 삭제 확인 모달 상태
+    const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
+    
     const importInputRef = useRef(null); 
 
     useEffect(() => {
@@ -454,21 +459,24 @@ const ForgingSpecManager = () => {
              createdAt: new Date().toISOString()
         }));
         
+        // 성능 최적화: 상태 업데이트 후 저장 작업을 이벤트 루프 뒤로 미룸
         setSpecs(prevSpecs => {
             const updatedSpecs = [...savedData, ...prevSpecs];
-            saveSpecsToLocalStorage(updatedSpecs);
+            setTimeout(() => saveSpecsToLocalStorage(updatedSpecs), 0);
             return updatedSpecs;
         });
         setModal({ isOpen: false });
     }, []);
 
     const handleDelete = useCallback((id) => {
+        // 단일 삭제 시에도 커스텀 확인 모달 사용 가능하나, 빠른 UX를 위해 즉시 삭제 처리
+        // INP 방지를 위해 저장 로직 지연 처리
         setSpecs(prevSpecs => {
             const updated = prevSpecs.filter(s => s.id !== id);
-            saveSpecsToLocalStorage(updated);
+            setTimeout(() => saveSpecsToLocalStorage(updated), 0);
             return updated;
         });
-        // 삭제 시 선택 상태도 해제
+        // 선택 상태도 정리
         setSelectedIds(prev => {
             const newSet = new Set(prev);
             newSet.delete(id);
@@ -491,22 +499,28 @@ const ForgingSpecManager = () => {
         if (selectedIds.size === specs.length && specs.length > 0) {
             setSelectedIds(new Set());
         } else {
+            // 현재 리스트에 있는 모든 ID 선택
             setSelectedIds(new Set(specs.map(s => s.id)));
         }
     }, [specs, selectedIds.size]);
 
-    // 선택된 항목 일괄 삭제 핸들러
+    // 선택된 항목 일괄 삭제 핸들러 (커스텀 모달 사용)
     const handleDeleteSelected = useCallback(() => {
         if (selectedIds.size === 0) return;
         
-        if (confirm(`선택한 ${selectedIds.size}개의 항목을 삭제하시겠습니까?`)) {
-            setSpecs(prevSpecs => {
-                const updated = prevSpecs.filter(s => !selectedIds.has(s.id));
-                saveSpecsToLocalStorage(updated);
-                return updated;
-            });
-            setSelectedIds(new Set()); // 선택 초기화
-        }
+        setConfirmModal({
+            isOpen: true,
+            message: `선택한 ${selectedIds.size}개의 항목을 정말 삭제하시겠습니까?`,
+            onConfirm: () => {
+                setSpecs(prevSpecs => {
+                    const updated = prevSpecs.filter(s => !selectedIds.has(s.id));
+                    setTimeout(() => saveSpecsToLocalStorage(updated), 0); // 저장 지연
+                    return updated;
+                });
+                setSelectedIds(new Set());
+                setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+            }
+        });
     }, [selectedIds]);
 
     const handleExportData = () => {
@@ -531,9 +545,9 @@ const ForgingSpecManager = () => {
                 const importedData = JSON.parse(event.target.result);
                 if (Array.isArray(importedData)) {
                     setSpecs(prevSpecs => {
-                         const mergedSpecs = [...importedData, ...prevSpecs];
+                        const mergedSpecs = [...importedData, ...prevSpecs];
                         const uniqueSpecs = mergedSpecs.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
-                        saveSpecsToLocalStorage(uniqueSpecs);
+                        setTimeout(() => saveSpecsToLocalStorage(uniqueSpecs), 0);
                         return uniqueSpecs;
                     });
                     
@@ -553,8 +567,9 @@ const ForgingSpecManager = () => {
     const filteredAndSortedSpecs = useMemo(() => {
         let result = specs;
         
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase();
+        // 검색 필터 (지연된 검색어 사용)
+        if (deferredSearchTerm) {
+            const term = deferredSearchTerm.toLowerCase();
             result = result.filter(s => 
                 s.fileName.toLowerCase().includes(term) || 
                 s.summary?.toLowerCase().includes(term) ||
@@ -574,7 +589,7 @@ const ForgingSpecManager = () => {
                 default: return 0;
             }
         });
-    }, [specs, searchTerm, sortOption]);
+    }, [specs, deferredSearchTerm, sortOption]);
 
     if (!isMounted) return null;
 
@@ -660,6 +675,7 @@ const ForgingSpecManager = () => {
                 )}
             </div>
 
+            {/* Modal for Details/Upload */}
             {modal.isOpen && (
                 <div className="fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 flex justify-center items-center p-4">
                     <div className="bg-white rounded-xl max-w-xl w-full shadow-2xl relative">
@@ -685,6 +701,31 @@ const ForgingSpecManager = () => {
                             </div>
                         )}
                     </div>
+                </div>
+            )}
+            
+            {/* Custom Confirm Modal */}
+            {confirmModal.isOpen && (
+                <div className="fixed inset-0 z-[60] overflow-y-auto bg-gray-900 bg-opacity-75 flex justify-center items-center p-4">
+                     <div className="bg-white rounded-xl max-w-sm w-full shadow-2xl p-6 text-center">
+                        <AlertCircle className="mx-auto text-red-500 mb-4" size={48} />
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">삭제 확인</h3>
+                        <p className="text-gray-600 mb-6">{confirmModal.message}</p>
+                        <div className="flex gap-3 justify-center">
+                            <button 
+                                onClick={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
+                                className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-medium"
+                            >
+                                취소
+                            </button>
+                            <button 
+                                onClick={confirmModal.onConfirm}
+                                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
+                            >
+                                삭제
+                            </button>
+                        </div>
+                     </div>
                 </div>
             )}
         </div>
