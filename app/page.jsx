@@ -83,7 +83,6 @@ const SpecCard = ({ spec, onDelete, onView }) => (
                 rel="noopener noreferrer"
                 onClick={(e) => {
                     e.preventDefault();
-                    // Download handling could be modal or actual download
                     alert("다운로드 기능: 실제 파일 경로가 있다면 다운로드가 시작됩니다.");
                 }}
                 className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md w-1/3 sm:w-auto"
@@ -103,13 +102,12 @@ const SpecCard = ({ spec, onDelete, onView }) => (
 );
 
 const UploadItem = ({ item, onChange, onDelete, onAnalyze, isAnalyzing }) => {
-    // fileType extraction based on extension
     const getFileTypeFromExtension = (name) => {
         if (!name) return 'N/A';
         const ext = name.split('.').pop().toLowerCase();
         if (['pdf'].includes(ext)) return 'PDF';
         if (['xlsx', 'xls'].includes(ext)) return 'XLSX';
-        if (['zip', 'rar', '7z'].includes(ext)) return 'ZIP';
+        // ZIP 등 기타 확장자는 제거
         return 'ETC';
     };
 
@@ -227,10 +225,32 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         const files = Array.from(event.target.files);
         if (files.length === 0) return;
 
-        const newSpecs = files.map(file => {
+        // 허용된 확장자 필터링 (PDF, Excel)
+        const allowedExtensions = ['pdf', 'xlsx', 'xls'];
+        const validFiles = files.filter(file => {
+            const ext = file.name.split('.').pop().toLowerCase();
+            return allowedExtensions.includes(ext);
+        });
+
+        if (validFiles.length === 0) {
+            alert("PDF 또는 엑셀 파일(.pdf, .xlsx, .xls)만 업로드할 수 있습니다.");
+            event.target.value = '';
+            return;
+        }
+
+        // 일부 파일만 유효할 경우 안내
+        if (validFiles.length < files.length) {
+             // alert(`총 ${files.length}개 중 ${validFiles.length}개의 파일만 허용된 형식(PDF, Excel)입니다.`); // 너무 자주 뜰 수 있어 주석 처리하거나 필요시 활성화
+        }
+
+        const newSpecs = validFiles.map(file => {
             const parts = file.name.split('.');
-            const fileType = parts.length > 1 ? parts.pop().toUpperCase() : 'N/A';
-            
+            // 확장자 대문자 변환
+            const ext = parts.pop().toLowerCase();
+            let fileType = 'ETC';
+            if(ext === 'pdf') fileType = 'PDF';
+            else if(ext === 'xlsx' || ext === 'xls') fileType = 'XLSX';
+
             let filePath = '';
             if (file.webkitRelativePath) {
                 const pathParts = file.webkitRelativePath.split('/');
@@ -251,7 +271,6 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         });
         
         setUploadQueue(prev => {
-            // 중복 제거 및 병합
             const existingFiles = prev.filter(item => item.fileName);
             return [...existingFiles, ...newSpecs, createInitialItem()];
         });
@@ -298,7 +317,6 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         }
 
         setIsAnalyzing(true);
-        // 병렬 처리
         await Promise.all(itemsToAnalyze.map(item => handleAnalyzeItem(item.id, item)));
         setIsAnalyzing(false);
     };
@@ -324,9 +342,11 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
     return (
         <div className="p-6 max-h-[80vh] overflow-y-auto">
             <h3 className="text-2xl font-bold text-gray-800 mb-4">시방서 등록 및 AI 분석</h3>
+            <p className="text-sm text-gray-500 mb-4">PDF, Excel 파일만 지원합니다.</p>
             
             {/* Hidden Inputs */}
-            <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" accept=".pdf, .xlsx, .xls, .zip, .rar, .7z" />
+            {/* accept 속성으로 파일 선택 창에서 1차 필터링 */}
+            <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" accept=".pdf, .xlsx, .xls" />
             <input ref={folderInputRef} type="file" {...{ webkitdirectory: "" }} onChange={handleFileSelect} className="hidden" />
 
             {/* Buttons */}
@@ -335,7 +355,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
                     <Upload size={20} className="mr-2" /> 개별 파일 선택
                 </button>
                 <button type="button" onClick={() => triggerFileInput(true)} className="w-full py-3 border-2 border-dashed border-indigo-300 rounded-lg text-indigo-700 flex justify-center items-center hover:bg-indigo-50">
-                    <File size={20} className="mr-2" /> 폴더 선택
+                    <File size={20} className="mr-2" /> 폴더 선택 (PDF/Excel만 자동 선택)
                 </button>
                 
                 {/* Analyze All */}
@@ -381,6 +401,8 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
 
 // --- Main App Component ---
 const ForgingSpecManager = () => {
+    // FIX: 하이드레이션 오류 방지를 위한 마운트 체크
+    const [isMounted, setIsMounted] = useState(false);
     const [userId] = useState("Local_User_ID"); 
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -389,10 +411,9 @@ const ForgingSpecManager = () => {
     const [error, setError] = useState('');
 
     useEffect(() => {
-        setLoading(true);
+        setIsMounted(true); // 클라이언트에서 마운트되었음을 표시
         const initialSpecs = loadSpecsFromLocalStorage();
         setSpecs(initialSpecs);
-        setLoading(false);
     }, []);
 
     const generateSpecMetadata = async (item) => {
@@ -400,8 +421,6 @@ const ForgingSpecManager = () => {
          
          const content = item.mockContent || `파일명: ${item.fileName}, 경로: ${item.filePath}, 타입: ${item.fileType}`;
          
-         // Mock API call simulation if key is invalid, else real call
-         // Real call logic same as before...
          const systemPrompt = `당신은 전문적인 '단조 시방서' 분석 전문가입니다.`;
          const payload = {
             contents: [{ parts: [{ text: `파일명: ${item.fileName} 내용: ${content}` }] }],
@@ -451,6 +470,9 @@ const ForgingSpecManager = () => {
         const term = searchTerm.toLowerCase();
         return specs.filter(s => s.fileName.toLowerCase().includes(term) || s.summary?.toLowerCase().includes(term));
     }, [specs, searchTerm]);
+
+    // 마운트 전에는 아무것도 렌더링하지 않음 (하이드레이션 에러 방지)
+    if (!isMounted) return null;
 
     return (
         <div className="min-h-screen bg-gray-50 p-4 sm:p-8 font-[Inter]">
