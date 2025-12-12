@@ -8,7 +8,7 @@ const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-
 
 // --- IndexedDB Helper Functions (For Binary File Storage) ---
 const DB_NAME = 'ForgingSpecManagerDB';
-const DB_VERSION = 4; // FIX: 버전 업데이트 (스키마 갱신 및 초기화)
+const DB_VERSION = 5; // FIX: 버전 업데이트 (DB 초기화 및 스키마 갱신)
 const STORE_NAME = 'files';
 
 const openDB = () => {
@@ -17,50 +17,70 @@ const openDB = () => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
         request.onupgradeneeded = (event) => {
             const db = event.target.result;
+            // 스토어가 없으면 생성
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME);
             }
         };
         request.onsuccess = (event) => resolve(event.target.result);
-        request.onerror = (event) => reject(event.target.error);
+        request.onerror = (event) => {
+            console.error("IndexedDB Open Error:", event.target.error);
+            reject(event.target.error);
+        };
     });
 };
 
 const saveFileToDB = async (id, file) => {
-    const db = await openDB();
-    if (!db) return;
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        
-        // 파일 유효성 검사 강화
-        if (!file) {
-            console.warn(`[IndexedDB] No file provided for ID: ${id}`);
-            return resolve(); 
-        }
+    try {
+        const db = await openDB();
+        if (!db) return;
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            
+            // 파일 객체 유효성 재확인
+            if (!file) {
+                console.warn(`[IndexedDB] 파일이 없어 저장을 건너뜁니다. ID: ${id}`);
+                return resolve();
+            }
 
-        const request = store.put(file, id);
-        request.onsuccess = () => {
-            console.log(`[IndexedDB] File saved: ${id}`);
-            resolve();
-        };
-        request.onerror = (e) => {
-            console.error(`[IndexedDB] Save Error for ${id}:`, e.target.error);
-            reject(e.target.error);
-        };
-    });
+            const request = store.put(file, id); // Key: id, Value: File Object
+            request.onsuccess = () => {
+                console.log(`[IndexedDB] 파일 저장 성공! ID: ${id}, Name: ${file.name}, Size: ${file.size}`);
+                resolve();
+            };
+            request.onerror = (e) => {
+                console.error(`[IndexedDB] 저장 실패 ID: ${id}:`, e.target.error);
+                reject(e.target.error);
+            };
+        });
+    } catch (e) {
+        console.error("[IndexedDB] saveFileToDB Exception:", e);
+    }
 };
 
 const getFileFromDB = async (id) => {
-    const db = await openDB();
-    if (!db) return null;
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.get(id);
-        request.onsuccess = (event) => resolve(event.target.result);
-        request.onerror = (e) => reject(e.target.error);
-    });
+    try {
+        const db = await openDB();
+        if (!db) return null;
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(id);
+            request.onsuccess = (event) => {
+                const result = event.target.result;
+                console.log(`[IndexedDB] 파일 조회 결과 ID: ${id} ->`, result ? "Found" : "Not Found");
+                resolve(result);
+            };
+            request.onerror = (e) => {
+                console.error(`[IndexedDB] 조회 실패 ID: ${id}:`, e.target.error);
+                reject(e.target.error);
+            };
+        });
+    } catch (e) {
+        console.error("[IndexedDB] getFileFromDB Exception:", e);
+        return null;
+    }
 };
 
 const deleteFileFromDB = async (id) => {
@@ -138,20 +158,19 @@ const createInitialItem = () => ({
     error: ''
 });
 
-// FIX: 검색바 최적화 (Debouncing 적용으로 INP 해결)
+// 검색바 컴포넌트
 const SearchBar = React.memo(({ onSearchChange, sortOption, onSortChange }) => {
     const [localValue, setLocalValue] = useState("");
 
-    // 입력 시에는 로컬 상태만 업데이트 (즉각 반응)
     const handleChange = (e) => {
         setLocalValue(e.target.value);
     };
 
-    // 300ms 후에 부모 컴포넌트(실제 검색)에 전달
+    // Debounce 적용 (500ms)
     useEffect(() => {
         const handler = setTimeout(() => {
             onSearchChange(localValue);
-        }, 300);
+        }, 500);
 
         return () => clearTimeout(handler);
     }, [localValue, onSearchChange]);
@@ -188,6 +207,7 @@ const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, o
 
     const handleDownloadClick = async () => {
         setIsDownloading(true);
+        console.log(`[SpecCard] 다운로드 요청 ID: ${spec.id}, 파일명: ${spec.fileName}`);
         await onDownload(spec);
         setIsDownloading(false);
     };
@@ -421,7 +441,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             
             return {
                 id: safeCreateId(),
-                file: file, 
+                file: file, // 중요: 파일 객체 저장
                 fileName: file.name,
                 filePath: filePath, 
                 fileType: fileType, 
@@ -607,10 +627,11 @@ const ForgingSpecManager = () => {
     }, []);
 
     const handleSave = useCallback(async (newSpecs) => { 
-        // FIX: 모든 파일 저장 약속(Promise)을 기다림
+        // FIX: 모든 파일 저장 약속(Promise)을 기다림 (IndexedDB 저장)
         const savePromises = newSpecs.map(spec => {
             if (spec.file) {
-                return saveFileToDB(spec.id, spec.file).catch(err => console.error("File save failed", err));
+                console.log(`[handleSave] 저장 시도: ${spec.fileName} (ID: ${spec.id})`);
+                return saveFileToDB(spec.id, spec.file);
             }
             return Promise.resolve();
         });
@@ -652,9 +673,11 @@ const ForgingSpecManager = () => {
 
     const handleDownloadSpec = useCallback(async (spec) => {
         try {
+            console.log(`[Download] ID 조회 시도: ${spec.id}`);
             const fileBlob = await getFileFromDB(spec.id);
             
             if (fileBlob) {
+                console.log(`[Download] 원본 파일 발견. 다운로드 시작: ${spec.fileName}`);
                 const url = URL.createObjectURL(fileBlob);
                 const link = document.createElement("a");
                 link.href = url;
@@ -664,7 +687,7 @@ const ForgingSpecManager = () => {
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
             } else {
-                alert("원본 파일을 찾을 수 없습니다. (브라우저 캐시가 삭제되었거나, 백업된 데이터일 수 있습니다.)\n분석 결과(텍스트)를 대신 다운로드합니다.");
+                alert("⚠️ 원본 파일을 데이터베이스에서 찾을 수 없습니다.\n브라우저 캐시가 삭제되었거나, 백업된 메타데이터일 수 있습니다.\n\n대신 분석 결과(텍스트)를 다운로드합니다.");
                 const content = `=== 단조 시방서 분석 결과 ===\n\n` +
                                 `파일명: ${spec.fileName}\n` +
                                 `파일 유형: ${spec.fileType}\n` +
@@ -698,7 +721,6 @@ const ForgingSpecManager = () => {
     }, []);
 
     const handleSelectAll = useCallback(() => {
-        // NOTE: 여기서는 전체 목록을 대상으로 함 (필터링된 목록을 하려면 props로 받아야 함)
         if (selectedIds.size === specs.length && specs.length > 0) {
             setSelectedIds(new Set());
         } else {
@@ -791,7 +813,7 @@ const ForgingSpecManager = () => {
                 default: return 0;
             }
         });
-    }, [specs, searchTerm, sortOption]); // searchTerm은 SearchBar에서 debounce되므로 직접 사용
+    }, [specs, searchTerm, sortOption]);
 
     if (!isMounted) return null;
 
@@ -827,7 +849,6 @@ const ForgingSpecManager = () => {
                     >
                         {specs.length > 0 && selectedIds.size === specs.length ? <CheckSquare size={20} /> : <Square size={20} />}
                     </button>
-                    {/* FIX: SearchBar component handles its own debounce */}
                     <SearchBar 
                         onSearchChange={setSearchTerm} 
                         sortOption={sortOption} 
