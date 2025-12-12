@@ -352,7 +352,8 @@ const ForgingSpecManager = () => {
     const SpecUploadModal = () => {
         // Initial item generator function
         const createInitialItem = () => ({
-            id: crypto.randomUUID(), // 로컬에서 고유 ID 생성
+            // FIX: crypto.randomUUID() 대신 안전한 방식으로 ID 생성
+            id: Date.now().toString(36) + Math.random().toString(36).substring(2), 
             fileName: '', 
             filePath: '', 
             fileType: '', 
@@ -366,7 +367,7 @@ const ForgingSpecManager = () => {
         const [uploadQueue, setUploadQueue] = useState([createInitialItem()]);
         const [isAnalyzing, setIsAnalyzing] = useState(false); 
         
-        const analyzedCount = uploadQueue.filter(item => item.status === 'analyzed').length;
+        const analyzedCount = uploadQueue.filter(item => item.fileName && item.status === 'analyzed').length;
         const canSave = analyzedCount > 0;
 
         const handleFileSelect = (event) => {
