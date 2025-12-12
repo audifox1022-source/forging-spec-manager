@@ -38,11 +38,11 @@ const getConfig = () => {
         }
     }
     
-    // FIX 1: If apiKey is missing in the parsed Firebase config, use Gemini key if available
-    if (!fbConfig.apiKey && gApiKey) {
-        fbConfig.apiKey = gApiKey; 
-        console.warn("Firebase apiKey was derived from Gemini API Key for initialization.");
-    }
+    // FIX 1: Gemini API Key로 Firebase apiKey를 대체하는 로직 제거 (오히려 혼란 야기)
+    // if (!fbConfig.apiKey && gApiKey) {
+    //     fbConfig.apiKey = gApiKey; 
+    //     console.warn("Firebase apiKey was derived from Gemini API Key for initialization.");
+    // }
     
     // FIX 2: If projectId is missing, use the default app ID for stability
     const fallbackProjectId = 'canvas-project-' + (Math.random().toString(36).substring(2, 8));
