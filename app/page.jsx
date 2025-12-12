@@ -8,7 +8,7 @@ const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-
 
 // --- IndexedDB Helper Functions (For Binary File Storage) ---
 const DB_NAME = 'ForgingSpecManagerDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // FIX: DB 버전 업데이트 (스키마 갱신 보장)
 const STORE_NAME = 'files';
 
 const openDB = () => {
@@ -289,6 +289,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
 
     const [uploadQueue, setUploadQueue] = useState([createInitialItem()]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [isSaving, setIsSaving] = useState(false); // 저장 중 상태 추가
 
     const analyzedCount = uploadQueue.filter(item => item.fileName && item.status === 'analyzed').length;
 
@@ -386,14 +387,16 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
         setIsAnalyzing(false);
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         const specsToSave = uploadQueue.filter(item => item.status === 'analyzed');
         if (specsToSave.length === 0) {
             alert("저장할 분석 완료 항목이 없습니다.");
             return;
         }
-        onSave(specsToSave);
+        setIsSaving(true);
+        await onSave(specsToSave); // 저장 완료 대기
+        setIsSaving(false);
     };
 
     const triggerFileInput = (isFolder) => {
@@ -424,7 +427,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
                 </button>
                 
                  {uploadQueue.filter(item => item.fileName).length > 0 && (
-                    <button type="button" onClick={handleAnalyzeAll} disabled={isAnalyzing} className="w-full py-3 bg-purple-600 text-white rounded-lg flex justify-center items-center mt-2 hover:bg-purple-700 disabled:bg-gray-400">
+                    <button type="button" onClick={handleAnalyzeAll} disabled={isAnalyzing || isSaving} className="w-full py-3 bg-purple-600 text-white rounded-lg flex justify-center items-center mt-2 hover:bg-purple-700 disabled:bg-gray-400">
                         <Zap size={18} className="mr-2" /> 일괄 분석하기
                     </button>
                  )}
@@ -446,11 +449,11 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
 
             <button
                 onClick={handleSubmit}
-                disabled={analyzedCount === 0 || isAnalyzing}
+                disabled={analyzedCount === 0 || isAnalyzing || isSaving}
                 className="mt-6 w-full py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 disabled:bg-gray-400 flex justify-center items-center"
             >
-                <Save size={20} className="mr-2" />
-                분석 완료 항목 저장 ({analyzedCount}개)
+                {isSaving ? <Loader2 size={20} className="mr-2 animate-spin" /> : <Save size={20} className="mr-2" />}
+                {isSaving ? "저장 중..." : `분석 완료 항목 저장 (${analyzedCount}개)`}
             </button>
             
              <button onClick={onClose} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600">
@@ -507,13 +510,16 @@ const ForgingSpecManager = () => {
          }
     }, []);
 
-    const handleSave = useCallback((newSpecs) => {
-        // 실제 파일은 IndexedDB에 저장
-        newSpecs.forEach(spec => {
+    const handleSave = useCallback(async (newSpecs) => { // async 추가
+        // 실제 파일은 IndexedDB에 저장 (병렬 처리 및 대기)
+        const savePromises = newSpecs.map(spec => {
             if (spec.file) {
-                saveFileToDB(spec.id, spec.file).catch(err => console.error("File save failed", err));
+                return saveFileToDB(spec.id, spec.file).catch(err => console.error("File save failed", err));
             }
+            return Promise.resolve();
         });
+
+        await Promise.all(savePromises); // 저장 완료 대기
 
         // 메타데이터만 로컬 스토리지에 저장
         const savedData = newSpecs.map(spec => ({
