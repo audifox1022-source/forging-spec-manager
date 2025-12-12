@@ -1,44 +1,734 @@
-"use client"; // <-- 이 줄은 유지되어야 합니다.
+"use client";
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth'; // signInWithCustomToken 제거
-import { getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, orderBy, serverTimestamp } from 'firebase/firestore'; 
-import { Search, FileText, Download, Upload, Trash2, Loader2, XCircle, Zap, File, ListChecks, AlertTriangle } from 'lucide-react';
+import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, AlertTriangle, Loader2 } from 'lucide-react';
 
-// --- Configuration Values (고객님이 제공한 값을 코드에 직접 적용) ---
-// 경고: 환경 변수가 아닌 코드에 직접 키를 넣는 방식입니다. 보안에 유의하세요.
-const firebaseConfig = {
-    apiKey: "AIzaSyCB43xipDeVyZVu4sAdtF0lGFIzzCfrsIc",
-    authDomain: "forging-spec-manager.firebaseapp.com",
-    projectId: "forging-spec-manager",
-    storageBucket: "forging-spec-manager.firebasestorage.app",
-    messagingSenderId: "299326184664",
-    appId: "1:299326184664:web:cfef24589a3cfe4a504bad",
-    measurementId: "G-0935D7SKB1"
-};
+// --- Global Constants ---
+const LOCAL_STORAGE_KEY = 'forging_specs_data';
+const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=";
+const API_KEY = ""; // Gemini API Key는 환경 변수에서 읽어오거나 비워둡니다 (Canvas에서 자동 주입)
 
-// Gemini API Key는 환경 변수에서 읽어오거나 비워둡니다 (Canvas에서 자동 주입)
-let envApiKey = "";
-if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
-    envApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-}
+// --- Helper Functions ---
 
-// Helper function to truncate keys for safe display
-const truncateKey = (key) => (key && typeof key === 'string' && key.length > 10 ? key.substring(0, 6) + '...' + key.substring(key.length - 4) : key || 'N/A');
-
-// FIX: Sanitize the appId to prevent Firestore path errors caused by slashes in the environment variable.
-const sanitizeAppId = (id) => {
-    if (typeof id === 'string') {
-        // Replace slashes (/) with hyphens (-) as slashes break Firestore paths.
-        // Also replace dots (.) with underscores (_) for general ID safety.
-        return id.replace(/\//g, '-').replace(/\./g, '_');
+// Helper function for exponential backoff retry (AI API 호출용)
+const fetchWithRetry = async (url, options, retries = 3) => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(url, options);
+            if (response.ok) return response;
+            if (response.status === 429 && i < retries - 1) { 
+                const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+            throw new Error(`HTTP error! status: ${response.status}`);
+        } catch (error) {
+            if (i === retries - 1) throw error;
+        }
     }
-    return firebaseConfig.projectId || 'spec-manager-v1'; 
 };
 
-// --- Global Variables ---
-// Canvas app ID를 최우선으로 사용, 없을 경우 프로젝트 ID를 기반으로 생성
-const appId = sanitizeAppId(typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId);
-const apiKey = envApiKey || ""; 
+// Local Storage에서 데이터를 로드하는 함수
+const loadSpecsFromLocalStorage = () => {
+    if (typeof window !== 'undefined') {
+        const storedData = localStorage.getItem(LOCAL_STORAGE_KEY);
+        try {
+            return storedData ? JSON.parse(storedData) : [];
+        } catch (e) {
+            console.error("Error parsing local storage data:", e);
+            return [];
+        }
+    }
+    return [];
+};
 
-const API_URL = `https://generativ
+// Local Storage에 데이터를 저장하는 함수
+const saveSpecsToLocalStorage = (specs) => {
+    if (typeof window !== 'undefined') {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(specs));
+    }
+};
+
+
+const ForgingSpecManager = () => {
+    // Firebase 인증은 사용하지 않으므로 isAuthReady는 항상 true로 간주
+    const [isAuthReady] = useState(true); 
+    // userId 대신 임시 ID 사용 (로컬 저장소 식별용)
+    const [userId] = useState("Local_User_ID"); 
+    const [specs, setSpecs] = useState([]);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [loading, setLoading] = useState(false); // 로딩은 데이터 로드 시점에만 사용
+    const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
+    const [error, setError] = useState('');
+
+    // 1. 초기 로드 (Local Storage에서 데이터 가져오기)
+    useEffect(() => {
+        setLoading(true);
+        const initialSpecs = loadSpecsFromLocalStorage();
+        setSpecs(initialSpecs);
+        setLoading(false);
+    }, []);
+
+    // --- Gemini API Handler: Generate Summary & Keywords ---
+    const generateSpecMetadata = useCallback(async (fileName, fileContent) => {
+        if (!API_KEY && !process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+            throw new Error("Gemini API Key가 설정되지 않았습니다.");
+        }
+
+        const currentApiKey = API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+
+        const systemPrompt = `당신은 전문적인 '단조 시방서' 분석 전문가입니다. 사용자가 제공한 문서 내용을 바탕으로 핵심 요약(summary)과 주요 키워드(keywords)를 추출하여 JSON 형식으로 제공하십시오.
+        핵심 요약은 50단어 이내로, 키워드는 5개 이내의 배열로 작성하십시오.`;
+
+        const userQuery = `문서 제목: ${fileName}. 문서 내용 (가상): ${fileContent}`;
+
+        const payload = {
+            contents: [{ parts: [{ text: userQuery }] }],
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: "OBJECT",
+                    properties: {
+                        "summary": { "type": "STRING", "description": "50단어 이내의 문서 핵심 요약." },
+                        "keywords": { "type": "ARRAY", "items": { "type": "STRING" }, "description": "문서의 주요 키워드 (5개 이내)." }
+                    },
+                    required: ["summary", "keywords"]
+                }
+            }
+        };
+
+        try {
+            const response = await fetchWithRetry(`${API_URL}${currentApiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+            const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            
+            if (!jsonText) throw new Error("AI 응답에서 내용이 누락되었습니다.");
+
+            const parsedData = JSON.parse(jsonText);
+            
+            return {
+                summary: parsedData.summary || "요약 생성 실패",
+                keywords: Array.isArray(parsedData.keywords) ? parsedData.keywords : []
+            };
+
+        } catch (e) {
+            console.error(`Gemini API 또는 JSON 파싱 오류 (문서: ${fileName}):`, e);
+            throw new Error(`AI 분석 실패: ${e.message}`);
+        }
+    }, []);
+
+    // --- CRUD Operations (Local Storage) ---
+
+    // Spec Registration (Saves PRE-ANALYZED specs to local storage)
+    const handleSaveAnalyzedSpecs = async (specsToSave) => {
+        setLoading(true); 
+        let saveError = '';
+        
+        const specsToSaveData = specsToSave
+            .filter(spec => spec.status === 'analyzed')
+            .map(spec => ({
+                id: spec.id,
+                fileName: spec.fileName,
+                fileType: spec.fileType,
+                downloadLink: `#mock-link-${Math.random().toString(36).substring(7)}`, 
+                summary: spec.summary,
+                keywords: spec.keywords,
+                createdAt: new Date().toISOString(), // Local timestamp
+            }));
+
+        try {
+            setSpecs(prevSpecs => {
+                const newSpecs = [...specsToSaveData, ...prevSpecs];
+                saveSpecsToLocalStorage(newSpecs);
+                return newSpecs;
+            });
+        } catch (e) {
+            console.error(`Local Storage 저장 실패:`, e);
+            saveError = `데이터 저장 실패: ${e.message}`;
+        }
+        
+        setLoading(false);
+        setModal({ isOpen: false, type: '', data: null });
+        if (saveError) {
+             setError(saveError);
+        }
+    };
+
+    // Spec Deletion
+    const handleDeleteSpec = (id) => {
+        const newSpecs = specs.filter(spec => spec.id !== id);
+        setSpecs(newSpecs);
+        saveSpecsToLocalStorage(newSpecs);
+    };
+
+    // --- UI/Filtering Logic ---
+    const filteredSpecs = useMemo(() => {
+        if (!searchTerm) return specs;
+        const lowerCaseSearch = searchTerm.toLowerCase();
+
+        return specs.filter(spec =>
+            spec.fileName?.toLowerCase().includes(lowerCaseSearch) ||
+            spec.keywords?.some(keyword => keyword.toLowerCase().includes(lowerCaseSearch)) ||
+            spec.summary?.toLowerCase().includes(lowerCaseSearch)
+        );
+    }, [specs, searchTerm]);
+
+    // --- Components ---
+    
+    // Component for a single upload item
+    const UploadItem = ({ index, item, onChange, onDelete, onAnalyze, isAnalyzing }) => {
+        // fileType extraction based on extension
+        const getFileTypeFromExtension = (name) => {
+            const ext = name.split('.').pop().toLowerCase();
+            if (['pdf'].includes(ext)) return 'PDF';
+            if (['xlsx', 'xls'].includes(ext)) return 'XLSX';
+            if (['zip', 'rar', '7z'].includes(ext)) return 'ZIP';
+            return 'ETC';
+        };
+
+        const isReadyForAnalysis = item.fileName && (API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY); 
+        const isAnalyzed = item.status === 'analyzed';
+        const isError = item.status === 'error';
+        const isCurrentAnalyzing = item.status === 'analyzing';
+
+        // Display logic for file name
+        const displayFileName = item.filePath ? `${item.filePath}/${item.fileName}` : item.fileName;
+
+        return (
+            <div className={`bg-gray-100 p-4 rounded-lg border-2 ${isAnalyzed ? 'border-green-400' : isError ? 'border-red-400' : 'border-gray-200'} shadow-inner mb-4 transition duration-300`}>
+                <div className="flex justify-between items-start mb-2">
+                    <h4 className="font-semibold text-gray-700">문서 #{index + 1}</h4>
+                    {index > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => onDelete(item.id)} 
+                            className="text-red-500 hover:text-red-700 transition"
+                            title="항목 제거"
+                        >
+                            <Trash2 size={16} />
+                        </button>
+                    )}
+                </div>
+                <div className="space-y-3">
+                    {/* Display File Name (Read-only) */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">선택된 파일 경로 및 이름</label>
+                        <div className="mt-1 flex items-center bg-white p-2 rounded-lg border border-gray-300 shadow-sm text-gray-800">
+                            <File size={16} className="mr-2 text-indigo-500" />
+                            <span className='truncate'>{displayFileName || "파일을 선택해주세요."}</span>
+                            <span className="ml-auto font-medium px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600 text-xs">
+                                {item.fileName ? getFileTypeFromExtension(item.fileName) : 'N/A'}
+                            </span>
+                        </div>
+                        {item.fileName && (
+                           <p className="text-xs text-gray-500 mt-1">파일 유형은 확장자를 기반으로 자동 분류되었습니다. (폴더 경로 포함)</p>
+                        )}
+                    </div>
+
+                    {/* Mock Content Input - Optional */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">AI 분석용 핵심 정보 (선택 사항)</label>
+                        <textarea
+                            value={item.mockContent}
+                            onChange={(e) => onChange(item.id, 'mockContent', e.target.value)}
+                            placeholder="문서의 주요 재질, 규격, 핵심 내용 등을 입력하면 더 정확하게 분석됩니다. (비워두면 파일명 기반으로 분석 추론)"
+                            rows="3"
+                            className="mt-1 block w-full rounded-lg border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                            disabled={isCurrentAnalyzing || !item.fileName}
+                        />
+                        {!item.fileName && (
+                            <p className="text-xs text-red-500 mt-1">파일을 먼저 선택해야 내용을 입력할 수 있습니다.</p>
+                        )}
+                    </div>
+                </div>
+                
+                {/* Analysis Status and Button */}
+                <div className="mt-4 border-t pt-3 border-gray-200">
+                    {isAnalyzed && (
+                        <div className="bg-green-50 text-green-700 p-2 rounded-lg text-sm mb-2">
+                            <span className="font-bold">분석 완료:</span> {item.summary}
+                        </div>
+                    )}
+                    {isError && (
+                        <div className="bg-red-50 text-red-700 p-2 rounded-lg text-sm mb-2">
+                            <span className="font-bold">분석 오류:</span> {item.error}
+                        </div>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => onAnalyze(item.id, item)}
+                        disabled={!isReadyForAnalysis || isCurrentAnalyzing || isAnalyzing}
+                        className={`w-full flex justify-center items-center py-2 px-4 rounded-lg shadow-sm text-sm font-medium transition ${
+                            isCurrentAnalyzing ? 'bg-yellow-500 text-white' : 
+                            isAnalyzed ? 'bg-green-600 text-white hover:bg-green-700' :
+                            isReadyForAnalysis ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 
+                            'bg-gray-400 text-gray-200'
+                        }`}
+                    >
+                        {isCurrentAnalyzing ? (
+                            <>
+                                <Loader2 size={16} className="animate-spin mr-2" />
+                                AI 분석 중...
+                            </>
+                        ) : isAnalyzed ? (
+                            <>
+                                <Zap size={16} className="mr-2" />
+                                재분석 (분석 완료됨)
+                            </>
+                        ) : (
+                            <>
+                                <Zap size={16} className="mr-2" />
+                                분석하기 (AI 요약 생성)
+                            </>
+                        )}
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+
+    const SpecCard = ({ spec }) => (
+        <div className="bg-white p-4 rounded-xl shadow-lg hover:shadow-xl transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border border-gray-100">
+            <div className="flex-grow">
+                <p className="text-lg font-semibold text-gray-800 break-words">{spec.fileName}</p>
+                <div className="text-sm text-gray-500 mt-1 flex items-center flex-wrap">
+                    <span className="font-medium mr-2 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-600">{spec.fileType}</span>
+                    <span className='mr-2'>|</span>
+                    {spec.keywords && spec.keywords.map((k, i) => (
+                        <span key={i} className="text-xs mr-1 bg-gray-100 text-gray-600 rounded-md px-1.5 py-0.5 mt-1 sm:mt-0">{k}</span>
+                    ))}
+                    {!spec.keywords || spec.keywords.length === 0 && <span className="text-xs italic">키워드 없음</span>}
+                </div>
+            </div>
+            <div className="flex space-x-2 flex-shrink-0 w-full sm:w-auto">
+                <button
+                    onClick={() => setModal({ isOpen: true, type: 'preview', data: spec })}
+                    className="flex items-center justify-center p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition shadow-md w-1/3 sm:w-auto"
+                    title="미리보기"
+                >
+                    <FileText size={18} />
+                </button>
+                <a
+                    href={spec.downloadLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => {
+                        e.preventDefault();
+                        setModal({ isOpen: true, type: 'info', data: "다운로드 기능: 이 앱은 메타데이터만 관리합니다. 실제 파일은 '다운로드 링크'를 통해 접근해야 합니다." });
+                    }}
+                    className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md w-1/3 sm:w-auto"
+                    title="다운로드"
+                >
+                    <Download size={18} />
+                </a>
+                <button
+                    onClick={() => handleDeleteSpec(spec.id)}
+                    className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md w-1/3 sm:w-auto"
+                    title="삭제"
+                >
+                    <Trash2 size={18} />
+                </button>
+            </div>
+        </div>
+    );
+
+    const SpecUploadModal = () => {
+        const initialItem = { 
+            id: crypto.randomUUID(), // 로컬에서 고유 ID 생성
+            fileName: '', 
+            filePath: '', 
+            fileType: '', 
+            mockContent: '', 
+            status: 'pending', 
+            summary: '', 
+            keywords: [], 
+            error: '' 
+        };
+        const [uploadQueue, setUploadQueue] = useState([initialItem]);
+        const [isAnalyzing, setIsAnalyzing] = useState(false); 
+        
+        const analyzedCount = uploadQueue.filter(item => item.status === 'analyzed').length;
+        const canSave = analyzedCount > 0;
+
+        const handleFileSelect = (event) => {
+            const files = Array.from(event.target.files);
+            if (files.length === 0) return;
+
+            const newSpecs = files.map(file => {
+                const parts = file.name.split('.');
+                const fileType = parts.length > 1 ? parts.pop().toUpperCase() : 'N/A';
+                
+                let filePath = '';
+                if (file.webkitRelativePath) {
+                    const pathParts = file.webkitRelativePath.split('/');
+                    filePath = pathParts.slice(0, -1).join('/'); 
+                }
+                
+                return {
+                    ...initialItem,
+                    id: crypto.randomUUID(), 
+                    fileName: file.name,
+                    filePath: filePath, 
+                    fileType: fileType, 
+                };
+            });
+            
+            setUploadQueue(prev => {
+                // 기존의 빈 항목을 제거하고 새 파일들을 추가
+                const existingFiles = prev.filter(item => item.fileName);
+                const uniqueNewSpecs = newSpecs.filter(spec => 
+                    !existingFiles.some(existing => existing.filePath + existing.fileName === spec.filePath + spec.fileName)
+                );
+                return [...existingFiles, ...uniqueNewSpecs, initialItem].filter((item, index, self) => 
+                    index === self.findIndex((t) => (t.id === item.id))
+                );
+            });
+
+            event.target.value = ''; 
+        };
+
+        const handleRemoveItem = (id) => {
+            setUploadQueue(uploadQueue.filter((item) => item.id !== id));
+        };
+
+        const handleInputChange = (id, field, value) => {
+            const newQueue = uploadQueue.map((item) => {
+                if (item.id === id) {
+                    return { 
+                        ...item, 
+                        [field]: value, 
+                        status: (item.status === 'analyzed' || item.status === 'error') ? 'pending' : item.status,
+                        summary: field === 'mockContent' ? '' : item.summary,
+                        keywords: field === 'mockContent' ? [] : item.keywords,
+                        error: ''
+                    };
+                }
+                return item;
+            });
+            setUploadQueue(newQueue);
+        };
+        
+        // --- Core Analysis Worker ---
+        const analyzeAndSetQueue = async (id, item) => {
+            setUploadQueue(prev => prev.map((q) => q.id === id ? { ...q, status: 'analyzing', error: '' } : q));
+            
+            try {
+                if (!API_KEY && !process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
+                     throw new Error("AI 분석을 위한 Gemini API Key가 설정되지 않았습니다.");
+                }
+
+                let contentToAnalyze = item.mockContent;
+                if (!contentToAnalyze) {
+                    const fullIdentifier = item.filePath ? `${item.filePath}/${item.fileName}` : item.fileName;
+                    contentToAnalyze = `이 문서는 "${fullIdentifier}"이라는 전체 이름의 ${item.fileType} 형식 시방서입니다. 이 문서가 일반적인 단조 프로젝트의 기술 요구 사항, 재료 사양, 테스트 절차 및 공차 한계를 상세히 다루고 있다고 가정하고, 파일 경로/제목과 문서 유형을 기반으로 요약 및 키워드를 생성하십시오.`;
+                }
+
+                const { summary, keywords } = await generateSpecMetadata(item.fileName, contentToAnalyze);
+
+                setUploadQueue(prev => prev.map((q) => 
+                    q.id === id ? { ...q, summary, keywords, status: 'analyzed' } : q
+                ));
+            } catch (e) {
+                console.error(`분석 오류 (문서: ${item.fileName})`, e);
+                setUploadQueue(prev => prev.map((q) => 
+                    q.id === id ? { ...q, status: 'error', error: e.message } : q
+                ));
+            }
+        };
+
+        const handleAnalyzeItem = (id, item) => {
+            if (!item.fileName) {
+                alert("파일을 먼저 선택해야 분석할 수 있습니다.");
+                return;
+            }
+            setIsAnalyzing(true); 
+            analyzeAndSetQueue(id, item).finally(() => setIsAnalyzing(false));
+        };
+        
+        const handleAnalyzeAll = async () => {
+            const itemsToAnalyze = uploadQueue.filter(item => item.fileName && (item.status === 'pending' || item.status === 'error'));
+            
+            if (itemsToAnalyze.length === 0) {
+                alert("분석할 대기 중이거나 오류가 발생한 항목이 없습니다.");
+                return;
+            }
+
+            setIsAnalyzing(true);
+            const analysisPromises = itemsToAnalyze.map(item => analyzeAndSetQueue(item.id, item));
+            await Promise.all(analysisPromises);
+            setIsAnalyzing(false);
+        };
+        
+        const handleSave = async (e) => {
+            e.preventDefault();
+            const specsToSave = uploadQueue.filter(item => item.status === 'analyzed');
+            
+            if (specsToSave.length === 0) {
+                alert("저장할 분석 완료 항목이 없습니다. '분석하기' 버튼을 먼저 눌러주세요.");
+                return;
+            }
+            
+            await handleSaveAnalyzedSpecs(specsToSave);
+            setUploadQueue([initialItem]); // 저장 후 목록 초기화
+        };
+
+        return (
+            <div className="p-6 max-h-[80vh] overflow-y-auto">
+                <h3 className="text-2xl font-bold text-gray-800 mb-4">시방서 등록 및 AI 분석</h3>
+                <p className="text-sm text-gray-600 mb-6">
+                    **파일 또는 폴더를 선택**하여 목록에 추가합니다. 각 항목에 **AI 분석용 핵심 정보**를 입력(선택 사항) 후 **'분석하기'**를 눌러 AI 요약과 키워드를 생성하고, **'저장하기'**를 통해 최종 등록하세요.
+                </p>
+                
+                {/* File Selection Input */}
+                <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">PC에서 시방서 파일 또는 폴더 선택</label>
+                    <label className="flex items-center justify-center w-full py-3 px-4 border-2 border-dashed border-indigo-300 rounded-lg shadow-sm text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition cursor-pointer">
+                        <Upload size={20} className="mr-3" />
+                        <span className="font-semibold">파일 또는 폴더를 선택하여 목록에 추가</span>
+                        <input
+                            type="file"
+                            multiple
+                            webkitdirectory="true" // Enable folder selection
+                            directory=""            // Fallback attribute
+                            onChange={handleFileSelect}
+                            className="hidden"
+                            accept=".pdf, .xlsx, .xls, .zip, .rar, .7z"
+                        />
+                    </label>
+                    {/* Updated Guidance Text */}
+                    <p className="text-xs text-gray-500 mt-2">
+                        **💡 다중 폴더 등록 안내:** 폴더 선택 시 한 번에 하나의 폴더만 지정할 수 있습니다. 여러 폴더의 파일을 등록하려면 **폴더 선택을 반복**하거나, **여러 파일을 한 번에 선택**하십시오. 파일들은 목록에 누적됩니다.
+                    </p>
+                    {uploadQueue.length > 0 && (
+                        <p className="text-sm text-gray-500 mt-2">총 {uploadQueue.filter(item => item.fileName).length}개의 파일이 목록에 준비되었습니다。</p>
+                    )}
+                </div>
+
+                {/* NEW: Analyze All Button */}
+                {uploadQueue.filter(item => item.fileName).length > 0 && (
+                    <div className="mb-6 border-b pb-4">
+                        <button
+                            type="button"
+                            onClick={handleAnalyzeAll}
+                            disabled={isAnalyzing || analyzedCount === uploadQueue.filter(item => item.fileName).length}
+                            className={`w-full flex justify-center items-center py-3 px-6 rounded-lg shadow-md font-bold transition ${
+                                isAnalyzing ? 'bg-yellow-500 text-white' : 
+                                analyzedCount === uploadQueue.filter(item => item.fileName).length ? 'bg-gray-400 text-gray-200' : 
+                                'bg-purple-600 text-white hover:bg-purple-700'
+                            }`}
+                        >
+                            {isAnalyzing ? (
+                                <>
+                                    <Loader2 size={18} className="animate-spin mr-3" />
+                                    전체 항목 AI 분석 중... ({uploadQueue.filter(item => item.fileName).length - analyzedCount}개 남음)
+                                </>
+                            ) : analyzedCount === uploadQueue.filter(item => item.fileName).length ? (
+                                <>
+                                    <ListChecks size={18} className="mr-3" />
+                                    모든 항목 분석 완료!
+                                </>
+                            ) : (
+                                <>
+                                    <Zap size={18} className="mr-3" />
+                                    일괄 분석하기 ({uploadQueue.filter(item => item.fileName).length - analyzedCount}개 대기)
+                                </>
+                            )}
+                        </button>
+                    </div>
+                )}
+
+
+                <form onSubmit={handleSave} className="space-y-4">
+                    {uploadQueue.filter(item => item.fileName).length === 0 ? (
+                        <div className="text-center py-8 text-gray-500 border border-dashed border-gray-300 rounded-lg">
+                            <p className="font-medium">👆 상단 버튼을 눌러 시방서 파일 또는 폴더를 선택해주세요。</p>
+                        </div>
+                    ) : (
+                        uploadQueue.filter(item => item.fileName).map((item, index) => (
+                            <UploadItem
+                                key={item.id}
+                                index={index}
+                                item={item}
+                                onChange={handleInputChange}
+                                onDelete={handleRemoveItem}
+                                onAnalyze={handleAnalyzeItem}
+                                isAnalyzing={isAnalyzing} 
+                            />
+                        ))
+                    )}
+                    
+
+                    <button
+                        type="submit"
+                        disabled={!canSave || loading || isAnalyzing}
+                        className="w-full flex justify-center items-center py-3 px-6 border border-transparent rounded-lg shadow-xl text-lg font-bold text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-gray-400 transition mt-6"
+                    >
+                        {loading ? (
+                            <>
+                                <Loader2 size={18} className="animate-spin mr-3" />
+                                항목 저장 중...
+                            </>
+                        ) : (
+                            <>
+                                <Download size={18} className="mr-3" />
+                                분석 완료 항목 저장 ({analyzedCount}개)
+                            </>
+                        )}
+                    </button>
+                </form>
+            </div>
+        );
+    };
+
+    const Modal = ({ children }) => (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 flex justify-center items-center p-4">
+            <div className="bg-white rounded-xl max-w-xl w-full shadow-2xl relative">
+                <button
+                    onClick={() => setModal({ isOpen: false, type: '', data: null })}
+                    className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition"
+                >
+                    <XCircle size={24} />
+                </button>
+                {children}
+            </div>
+        </div>
+    );
+
+    // --- Main Render ---
+    return (
+        <div className="min-h-screen bg-gray-50 p-4 sm:p-8 font-[Inter]">
+            <header className="mb-8">
+                <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900">단조 시방서 통합 관리 시스템</h1>
+                <p className="text-lg text-gray-600 mt-1">AI 요약 및 키워드 검색 기반의 문서 접근성 향상</p>
+                {/* Firebase 대신 Local Storage를 사용하므로 ID를 임시로 표시 */}
+                <div className={`mt-2 text-xs text-green-600`}>
+                    사용자 ID: {userId} (로컬 저장소 사용 중)
+                </div>
+            </header>
+
+            {/* Error Message (Local Storage 사용으로 Firebase 오류는 사라짐) */}
+            {error && (
+                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-6 whitespace-pre-wrap" role="alert">
+                    <strong className="font-bold">오류 발생!</strong>
+                    <span className="block sm:inline ml-2">{error}</span>
+                </div>
+            )}
+            
+            <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
+                {/* Search Bar */}
+                <div className="relative flex-grow">
+                    <input
+                        type="text"
+                        placeholder="문서 제목, 키워드, 내용으로 검색..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        disabled={loading} 
+                        className="w-full rounded-lg border-2 border-gray-300 p-3 pl-10 shadow-inner focus:border-indigo-500 focus:ring-indigo-500 transition disabled:bg-gray-200"
+                    />
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                </div>
+                
+                {/* Upload Button */}
+                <button
+                    onClick={() => setModal({ isOpen: true, type: 'upload', data: null })}
+                    disabled={loading} 
+                    className="flex items-center justify-center py-3 px-6 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition shadow-lg disabled:bg-gray-400"
+                >
+                    <Upload size={20} className="mr-2" />
+                    시방서 등록 (메타데이터)
+                </button>
+            </div>
+            
+            {/* Spec List */}
+            <div className="space-y-4">
+                {loading && (
+                    <div className="flex justify-center items-center py-10 text-indigo-600">
+                        <Loader2 size={32} className="animate-spin mr-3" />
+                        <p className="text-lg font-medium">데이터를 로드하고 있습니다...</p>
+                    </div>
+                )}
+                
+                {!loading && specs.length === 0 && (
+                    <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
+                        <FileText size={48} className="mx-auto text-gray-300" />
+                        <p className="mt-3 text-lg font-medium">등록된 시방서가 없습니다.</p>
+                        <p className="text-sm">상단의 '시방서 등록' 버튼으로 새로운 문서를 추가해보세요。</p>
+                    </div>
+                )}
+                
+                {!loading && filteredSpecs.map(spec => (
+                    <SpecCard key={spec.id} spec={spec} />
+                ))}
+
+                {!loading && searchTerm && filteredSpecs.length === 0 && (
+                     <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl">
+                        <p className="text-lg font-medium">'{searchTerm}'에 대한 검색 결과가 없습니다.</p>
+                        <p className="text-sm">다른 키워드로 검색해보거나 문서를 등록해주세요。</p>
+                    </div>
+                )}
+            </div>
+            
+            {/* Modals */}
+            {modal.isOpen && modal.type === 'upload' && (
+                <Modal>
+                    <SpecUploadModal />
+                </Modal>
+            )}
+
+            {modal.isOpen && modal.type === 'preview' && modal.data && (
+                <Modal>
+                    <div className="p-6">
+                        <h3 className="text-2xl font-bold text-gray-800 mb-2">{modal.data.fileName}</h3>
+                        <p className="text-sm font-medium text-indigo-600 mb-4">{modal.data.fileType} 파일 요약 (AI 미리보기)</p>
+                        
+                        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 max-h-80 overflow-y-auto">
+                            <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                {modal.data.summary || "AI 요약 내용이 없습니다."}
+                            </p>
+                        </div>
+                        
+                        <div className="mt-4">
+                            <p className="text-sm font-medium text-gray-700 mb-1">주요 키워드</p>
+                            <div className="flex flex-wrap gap-2">
+                                {modal.data.keywords && modal.data.keywords.map((k, i) => (
+                                    <span key={i} className="px-3 py-1 bg-indigo-100 text-indigo-800 text-sm font-medium rounded-full">{k}</span>
+                                ))}
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={() => setModal({ isOpen: false, type: '', data: null })}
+                            className="mt-6 w-full py-2 px-4 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition"
+                        >
+                            닫기
+                        </button>
+                    </div>
+                </Modal>
+            )}
+
+            {modal.isOpen && modal.type === 'info' && (
+                <Modal>
+                    <div className="p-6 text-center">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">기능 안내</h3>
+                        <p className="text-gray-600">{modal.data}</p>
+                        <button
+                            onClick={() => setModal({ isOpen: false, type: '', data: null })}
+                            className="mt-6 py-2 px-4 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition"
+                        >
+                            확인
+                        </button>
+                    </div>
+                </Modal>
+            )}
+
+        </div>
+    );
+};
+
+export default ForgingSpecManager;
