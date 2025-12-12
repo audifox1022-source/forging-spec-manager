@@ -6,7 +6,63 @@ import { Search, FileText, Download, Upload, Trash2, Zap, File, ListChecks, Aler
 const LOCAL_STORAGE_KEY = 'forging_specs_data';
 const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=";
 
-// Gemini API Key를 환경 변수에서 가져오는 안전한 로직
+// --- IndexedDB Helper Functions (For Binary File Storage) ---
+const DB_NAME = 'ForgingSpecManagerDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'files';
+
+const openDB = () => {
+    return new Promise((resolve, reject) => {
+        if (typeof window === 'undefined') return resolve(null);
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+            }
+        };
+        request.onsuccess = (event) => resolve(event.target.result);
+        request.onerror = (event) => reject(event.target.error);
+    });
+};
+
+const saveFileToDB = async (id, file) => {
+    const db = await openDB();
+    if (!db) return;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put(file, id);
+        request.onsuccess = () => resolve();
+        request.onerror = (e) => reject(e.target.error);
+    });
+};
+
+const getFileFromDB = async (id) => {
+    const db = await openDB();
+    if (!db) return null;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(id);
+        request.onsuccess = (event) => resolve(event.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
+};
+
+const deleteFileFromDB = async (id) => {
+    const db = await openDB();
+    if (!db) return;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.delete(id);
+        request.onsuccess = () => resolve();
+        request.onerror = (e) => reject(e.target.error);
+    });
+};
+
+// --- Gemini API Key Logic ---
 const getCurrentApiKey = () => {
     if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) {
         return process.env.NEXT_PUBLIC_GEMINI_API_KEY;
@@ -46,7 +102,6 @@ const loadSpecsFromLocalStorage = () => {
     return [];
 };
 
-// 성능 최적화를 위해 저장을 비동기로 처리할 수 있도록 설계 (호출부에서 setTimeout 사용)
 const saveSpecsToLocalStorage = (specs) => {
     if (typeof window !== 'undefined') {
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(specs));
@@ -55,14 +110,12 @@ const saveSpecsToLocalStorage = (specs) => {
 
 const safeCreateId = () => Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 
-// --- Sub Components (Memoized for Performance) ---
+// --- Sub Components ---
 
-// React.memo를 사용하여 props가 변경되지 않으면 리렌더링 방지
-const SpecCard = React.memo(({ spec, onDelete, onView, isSelected, onToggleSelect }) => (
+const SpecCard = React.memo(({ spec, onDelete, onView, onDownload, isSelected, onToggleSelect }) => (
     <div 
         className={`bg-white p-4 rounded-xl shadow-lg transition duration-300 flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4 border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-100' : 'border-gray-100 hover:shadow-xl'}`}
     >
-        {/* 체크박스 영역 */}
         <button 
             onClick={() => onToggleSelect(spec.id)} 
             className="flex-shrink-0 text-gray-400 hover:text-indigo-600 focus:outline-none transition-colors p-1"
@@ -98,19 +151,13 @@ const SpecCard = React.memo(({ spec, onDelete, onView, isSelected, onToggleSelec
             >
                 <FileText size={18} /> <span className="ml-1 text-sm sm:hidden">상세보기</span>
             </button>
-            <a
-                href={spec.downloadLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => {
-                    e.preventDefault();
-                    alert("다운로드 기능: 실제 파일 경로가 있다면 다운로드가 시작됩니다.");
-                }}
+            <button
+                onClick={() => onDownload(spec)}
                 className="flex items-center justify-center p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-md"
-                title="파일 다운로드"
+                title="원본 파일 다운로드"
             >
                 <Download size={18} /> <span className="ml-1 text-sm sm:hidden">다운로드</span>
-            </a>
+            </button>
             <button
                 onClick={() => onDelete(spec.id)}
                 className="flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-md"
@@ -229,6 +276,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
 
     const createInitialItem = useCallback(() => ({
         id: safeCreateId(),
+        file: null, // 실제 파일 객체를 저장할 필드 추가
         fileName: '',
         filePath: '',
         fileType: '',
@@ -275,6 +323,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             
             return {
                 id: safeCreateId(),
+                file: file, // 파일 객체 저장
                 fileName: file.name,
                 filePath: filePath, 
                 fileType: fileType, 
@@ -360,7 +409,7 @@ const SpecUploadModal = ({ onClose, onSave, analyzeFunction }) => {
             <h3 className="text-2xl font-bold text-gray-800 mb-4">시방서 등록 및 AI 분석</h3>
             <p className="text-sm text-gray-500 mb-4">
                 PDF, Excel 파일을 선택하여 분석합니다.<br/>
-                <span className="text-xs text-orange-500">* 주의: 파일 자체는 저장되지 않으며, AI가 분석한 메타데이터(요약, 키워드)만 저장됩니다.</span>
+                <span className="text-xs text-blue-500">* 파일은 브라우저(IndexedDB)에 저장되어 다운로드 가능합니다. 캐시 삭제 시 사라집니다.</span>
             </p>
             
             <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" accept=".pdf, .xlsx, .xls" />
@@ -417,14 +466,11 @@ const ForgingSpecManager = () => {
     const [userId] = useState("Local_User_ID"); 
     const [specs, setSpecs] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-    // 검색어 입력을 지연시켜 렌더링 성능 최적화 (INP 개선)
     const deferredSearchTerm = useDeferredValue(searchTerm); 
     const [sortOption, setSortOption] = useState('date-desc');
     const [modal, setModal] = useState({ isOpen: false, type: '', data: null });
     const [error, setError] = useState('');
-    // 다중 선택 상태
     const [selectedIds, setSelectedIds] = useState(new Set());
-    // 삭제 확인 모달 상태
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
     
     const importInputRef = useRef(null); 
@@ -462,17 +508,24 @@ const ForgingSpecManager = () => {
     }, []);
 
     const handleSave = useCallback((newSpecs) => {
+        // 실제 파일은 IndexedDB에 저장
+        newSpecs.forEach(spec => {
+            if (spec.file) {
+                saveFileToDB(spec.id, spec.file).catch(err => console.error("File save failed", err));
+            }
+        });
+
+        // 메타데이터만 로컬 스토리지에 저장
         const savedData = newSpecs.map(spec => ({
              id: spec.id,
              fileName: spec.fileName,
              fileType: spec.fileType,
-             downloadLink: '#',
+             downloadLink: '#', // 사용되지 않음 (DB에서 로드)
              summary: spec.summary,
              keywords: spec.keywords,
              createdAt: new Date().toISOString()
         }));
         
-        // 성능 최적화: 상태 업데이트 후 저장 작업을 이벤트 루프 뒤로 미룸
         setSpecs(prevSpecs => {
             const updatedSpecs = [...savedData, ...prevSpecs];
             setTimeout(() => saveSpecsToLocalStorage(updatedSpecs), 0);
@@ -482,14 +535,14 @@ const ForgingSpecManager = () => {
     }, []);
 
     const handleDelete = useCallback((id) => {
-        // 단일 삭제 시에도 커스텀 확인 모달 사용 가능하나, 빠른 UX를 위해 즉시 삭제 처리
-        // INP 방지를 위해 저장 로직 지연 처리
+        // 파일과 메타데이터 모두 삭제
+        deleteFileFromDB(id);
+        
         setSpecs(prevSpecs => {
             const updated = prevSpecs.filter(s => s.id !== id);
             setTimeout(() => saveSpecsToLocalStorage(updated), 0);
             return updated;
         });
-        // 선택 상태도 정리
         setSelectedIds(prev => {
             const newSet = new Set(prev);
             newSet.delete(id);
@@ -497,7 +550,47 @@ const ForgingSpecManager = () => {
         });
     }, []);
 
-    // 다중 선택 토글 핸들러
+    // 원본 파일 다운로드 핸들러
+    const handleDownloadSpec = useCallback(async (spec) => {
+        try {
+            const fileBlob = await getFileFromDB(spec.id);
+            
+            if (fileBlob) {
+                // 원본 파일이 있으면 다운로드
+                const url = URL.createObjectURL(fileBlob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = spec.fileName; // 원본 파일명 사용
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            } else {
+                // 원본 파일이 없으면 (예: 백업 복원 후) 텍스트 요약본 다운로드
+                alert("원본 파일을 찾을 수 없습니다. 분석 결과(텍스트)를 대신 다운로드합니다.");
+                const content = `=== 단조 시방서 분석 결과 ===\n\n` +
+                                `파일명: ${spec.fileName}\n` +
+                                `파일 유형: ${spec.fileType}\n` +
+                                `등록일: ${new Date(spec.createdAt).toLocaleString()}\n\n` +
+                                `[핵심 요약]\n${spec.summary}\n\n` +
+                                `[주요 키워드]\n${spec.keywords ? spec.keywords.join(', ') : '없음'}`;
+                
+                const blob = new Blob([content], { type: "text/plain" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `[분석결과]_${spec.fileName}.txt`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            }
+        } catch (error) {
+            console.error("Download failed:", error);
+            alert("다운로드 중 오류가 발생했습니다.");
+        }
+    }, []);
+
     const handleToggleSelect = useCallback((id) => {
         setSelectedIds(prev => {
             const newSet = new Set(prev);
@@ -507,27 +600,27 @@ const ForgingSpecManager = () => {
         });
     }, []);
 
-    // 전체 선택/해제 핸들러
     const handleSelectAll = useCallback(() => {
         if (selectedIds.size === specs.length && specs.length > 0) {
             setSelectedIds(new Set());
         } else {
-            // 현재 리스트에 있는 모든 ID 선택
             setSelectedIds(new Set(specs.map(s => s.id)));
         }
     }, [specs, selectedIds.size]);
 
-    // 선택된 항목 일괄 삭제 핸들러 (커스텀 모달 사용)
     const handleDeleteSelected = useCallback(() => {
         if (selectedIds.size === 0) return;
         
         setConfirmModal({
             isOpen: true,
-            message: `선택한 ${selectedIds.size}개의 항목을 정말 삭제하시겠습니까?`,
+            message: `선택한 ${selectedIds.size}개의 항목을 정말 삭제하시겠습니까? (원본 파일도 함께 삭제됩니다)`,
             onConfirm: () => {
+                // 선택된 모든 파일 DB에서 삭제
+                selectedIds.forEach(id => deleteFileFromDB(id));
+
                 setSpecs(prevSpecs => {
                     const updated = prevSpecs.filter(s => !selectedIds.has(s.id));
-                    setTimeout(() => saveSpecsToLocalStorage(updated), 0); // 저장 지연
+                    setTimeout(() => saveSpecsToLocalStorage(updated), 0);
                     return updated;
                 });
                 setSelectedIds(new Set());
@@ -564,7 +657,7 @@ const ForgingSpecManager = () => {
                         return uniqueSpecs;
                     });
                     
-                    alert("데이터 복원이 완료되었습니다.");
+                    alert("데이터 복원이 완료되었습니다. (주의: 원본 파일은 백업되지 않으므로 텍스트 요약만 복원됩니다.)");
                 } else {
                     alert("올바르지 않은 JSON 형식입니다.");
                 }
@@ -580,7 +673,6 @@ const ForgingSpecManager = () => {
     const filteredAndSortedSpecs = useMemo(() => {
         let result = specs;
         
-        // 검색 필터 (지연된 검색어 사용)
         if (deferredSearchTerm) {
             const term = deferredSearchTerm.toLowerCase();
             result = result.filter(s => 
@@ -611,8 +703,8 @@ const ForgingSpecManager = () => {
             <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900">단조 시방서 통합 관리 시스템</h1>
-                    <p className="text-lg text-gray-600 mt-1">AI 요약 및 키워드 검색 (Local Storage)</p>
-                    <div className="mt-2 text-xs text-green-600">사용자: {userId}</div>
+                    <p className="text-lg text-gray-600 mt-1">AI 요약 및 키워드 검색 (Local Storage + IndexedDB)</p>
+                    <div className="mt-2 text-xs text-green-600">사용자: {userId} (브라우저 저장소 사용 중)</div>
                 </div>
                 <div className="flex gap-2">
                     <button onClick={handleExportData} className="flex items-center px-3 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition text-sm">
@@ -629,10 +721,8 @@ const ForgingSpecManager = () => {
                 <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-6">{error}</div>
             )}
 
-            {/* 컨트롤 바: 검색, 정렬, 등록, 다중삭제 */}
             <div className="flex flex-col xl:flex-row space-y-4 xl:space-y-0 xl:space-x-4 mb-8">
                 <div className="relative flex-grow flex gap-2">
-                    {/* 전체 선택 체크박스 */}
                     <button 
                         onClick={handleSelectAll}
                         className={`flex items-center justify-center w-12 rounded-lg border-2 ${specs.length > 0 && selectedIds.size === specs.length ? 'border-indigo-500 bg-indigo-50 text-indigo-600' : 'border-gray-300 bg-white text-gray-400'}`}
@@ -681,14 +771,14 @@ const ForgingSpecManager = () => {
                             spec={spec} 
                             isSelected={selectedIds.has(spec.id)}
                             onToggleSelect={handleToggleSelect}
-                            onDelete={handleDelete} 
+                            onDelete={handleDelete}
+                            onDownload={handleDownloadSpec} 
                             onView={(s) => setModal({ isOpen: true, type: 'preview', data: s })} 
                         />
                     ))
                 )}
             </div>
 
-            {/* Modal for Details/Upload */}
             {modal.isOpen && (
                 <div className="fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-75 flex justify-center items-center p-4">
                     <div className="bg-white rounded-xl max-w-xl w-full shadow-2xl relative">
@@ -717,7 +807,6 @@ const ForgingSpecManager = () => {
                 </div>
             )}
             
-            {/* Custom Confirm Modal */}
             {confirmModal.isOpen && (
                 <div className="fixed inset-0 z-[60] overflow-y-auto bg-gray-900 bg-opacity-75 flex justify-center items-center p-4">
                      <div className="bg-white rounded-xl max-w-sm w-full shadow-2xl p-6 text-center">
