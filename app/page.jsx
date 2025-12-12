@@ -389,10 +389,15 @@ const ForgingSpecManager = () => {
                 }
                 
                 return {
-                    ...createInitialItem(),
+                    id: safeCreateId(), // Ensure new ID for selected file
                     fileName: file.name,
                     filePath: filePath, 
                     fileType: fileType, 
+                    mockContent: '', 
+                    status: 'pending', 
+                    summary: '', 
+                    keywords: [], 
+                    error: ''
                 };
             });
             
@@ -403,9 +408,7 @@ const ForgingSpecManager = () => {
                     !existingFiles.some(existing => existing.filePath + existing.fileName === spec.filePath + spec.fileName)
                 );
                 // 새 항목을 추가하고, 빈 입력 항목 하나를 유지
-                return [...existingFiles, ...uniqueNewSpecs, createInitialItem()].filter((item, index, self) => 
-                    index === self.findIndex((t) => (t.id === item.id))
-                );
+                return [...existingFiles, ...uniqueNewSpecs, createInitialItem()];
             });
 
             event.target.value = ''; 
@@ -493,6 +496,7 @@ const ForgingSpecManager = () => {
             }
             
             await handleSaveAnalyzedSpecs(specsToSave);
+            setModal({ isOpen: false, type: '', data: null }); // FIX: 저장 성공 시 모달 닫기
             setUploadQueue([createInitialItem()]); // 저장 후 목록 초기화
         };
 
